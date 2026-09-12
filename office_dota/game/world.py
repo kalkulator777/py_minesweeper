@@ -1245,7 +1245,12 @@ class World:
 
     def _spawn_wave(self, team: int, lane: str) -> None:
         ts = self.teams[team]
-        rax_down = ts.barracks_down[lane]
+        # Усиление зависит от бараков ПРОТИВНИКА: снёс их — получил супер-крипов.
+        # Раньше читались собственные, и усиливалась та команда, у которой
+        # бараки снесли. Проигрывающая сторона получала подкрепление,
+        # и матч не мог закончиться в принципе.
+        enemy_ts = self.teams[enemy_of(team)]
+        rax_down = enemy_ts.barracks_down[lane]
         melee_key = "super_melee" if "melee" in rax_down else "melee_creep"
         ranged_key = "super_ranged" if "ranged" in rax_down else "ranged_creep"
 
@@ -1268,7 +1273,7 @@ class World:
             self._apply_creep_stats(c, d)
             c.waypoints = waypoints
             c.wp_idx = 0
-            if ts.mega_creeps:
+            if enemy_ts.mega_creeps:
                 c.is_super = True
                 c.add_modifier(self._mega_buff())
             self.register(c)

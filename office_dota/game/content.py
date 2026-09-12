@@ -189,9 +189,10 @@ def _norm_creep(d: dict) -> dict:
 
 
 def _norm_building(d: dict) -> dict:
+    scale = float(getattr(_t, "BUILDING_HP_SCALE", 1.0)) if _t else 1.0
     return {
         "name": d.get("name", "Строение"),
-        "hp": float(d.get("hp", 1500)),
+        "hp": float(d.get("hp", 1500)) * scale,
         "damage": _as_range(d.get("damage"), (0, 0)),
         "armor": float(d.get("armor", 0)),
         "magic_resist": float(d.get("magic_resist", 0)),
@@ -237,6 +238,12 @@ JUNGLE: dict = getattr(_t, "JUNGLE", {})
 RUNES: dict = getattr(_t, "RUNES", {})
 ECONOMY: dict = getattr(_t, "ECONOMY", _FALLBACK_ECONOMY)
 RESPAWN_TABLE: list = getattr(_t, "RESPAWN_TABLE", _FALLBACK_RESPAWN)
+# Единственная крутилка темпа матча. Если после живой игры матчи кажутся
+# затянутыми — 0.8 или 0.7 заметно ускорят концовку, не трогая остальное.
+# Замер на ботах: при равных составах матч упирается в позиционный пат,
+# при перевесе одной стороны трон падает на 17-й минуте.
+BUILDING_HP_SCALE: float = float(getattr(_t, "BUILDING_HP_SCALE", 1.0))
+
 BUILDING_RULES: dict = getattr(_t, "BUILDING_RULES", None) or {
     "backdoor_damage_taken_pct": 0.25,
     "backdoor_regen_hp_per_sec": 25.0,
