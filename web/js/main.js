@@ -6,7 +6,7 @@ import { initInput, tickCamera, castPreview, ui } from './input.js';
 import {
   showScreen, initMenu, initLobby, renderLobby, initHud, renderHud,
   renderTop, renderScore, renderPause, renderKillfeed, renderEnd, renderLateJoin,
-  pushChat, toggleShop, toggleScore, toast, renderSaves,
+  pushChat, toggleShop, toggleScore, toast, renderSaves, toggleHelp,
 } from './ui.js';
 
 // Доступ к состоянию из консоли и автотестов
@@ -17,7 +17,12 @@ const cv = document.getElementById('cv');
 const mm = document.getElementById('minimap');
 
 initRender(cv);
-initInput(cv, { toggleShop, toggleScore });
+let helpOpen = false;
+initInput(cv, {
+  toggleShop,
+  toggleScore,
+  toggleHelp: () => { helpOpen = !helpOpen; toggleHelp(helpOpen); },
+});
 initMenu();
 initLobby();
 initHud();

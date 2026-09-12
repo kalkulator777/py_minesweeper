@@ -16,6 +16,8 @@ from .consts import (
 )
 
 THINK_INTERVAL = 0.35        # с, как часто бот принимает решения
+GROUP_AFTER_SEC = 480.0      # с, когда боты перестают сидеть по линиям
+GROUP_RETHINK = 25.0         # с, как часто пересматривается общая цель
 RETREAT_HP = 0.32
 RESUME_HP = 0.72
 ENGAGE_RADIUS = 900.0
@@ -53,6 +55,11 @@ class BotDirector:
         self.brains: dict[int, BotBrain] = {}
         self._lane_cursor = {0: 0, 1: 0}
         self._shop_keys: list[str] = []
+        # Общая цель команды. Без неё боты разбредаются по трём линиям,
+        # меняются объектами поровну и матч не заканчивается никогда:
+        # в прогоне на двадцать шесть минут бараки оставались целыми.
+        self._focus: dict[int, str] = {}
+        self._focus_until: dict[int, float] = {}
 
     def _pick_lane(self, team: int) -> str:
         lanes = [gm.LANE_MID, gm.LANE_BOT, gm.LANE_TOP]
@@ -154,13 +161,83 @@ class BotDirector:
                 best_hp, best = u.hp, u
         return best or fallback
 
-    def _push_lane(self, h, brain: BotBrain) -> None:
+    def team_focus(self, team: int) -> str:
+        """Линия, на которую команда давит вместе. Выбирается по самому
+        слабому оставшемуся строению противника."""
         w = self.world
-        pts = gm.LANE_PATHS[brain.lane]
-        # Идём к самой дальней своей башне по линии, а оттуда — вперёд
-        t = 0.5 if h.team == TEAM_DEV else 0.5
-        target = gm.point_at_t(pts, 0.62 if h.team == TEAM_DEV else 0.38)
-        w.issue_order(h, "attack_move", target[0], target[1])
+        if w.time < GROUP_AFTER_SEC:
+            return ""
+        if self._focus_until.get(team, 0.0) > w.time:
+            return self._focus.get(team, "")
+
+        enemy = enemy_of(team)
+        best_lane, best_score = "", 1e18
+        for lane in gm.LANES:
+            targets = [u for u in w.units.values()
+                       if u.alive and u.team == enemy and u.is_building
+                       and u.lane == lane and u.etype != "fountain"
+                       and not w.is_invulnerable_building(u)]
+            if not targets:
+                continue
+            # Чем меньше здоровья у ближайшего рубежа, тем привлекательнее линия
+            score = min(t.hp for t in targets)
+            if score < best_score:
+                best_score, best_lane = score, lane
+
+        self._focus[team] = best_lane
+        self._focus_until[team] = w.time + GROUP_RETHINK
+        return best_lane
+
+    def _push_lane(self, h, brain: BotBrain) -> None:
+        """Идти на ближайшее уязвимое вражеское строение своей линии.
+
+        Раньше бот шёл в фиксированную точку у середины и там застревал:
+        матчи ботов не заканчивались вообще, бараки оставались целы
+        через двадцать шесть минут.
+        """
+        w = self.world
+        lane = self.team_focus(h.team) or brain.lane
+        target = self._next_objective(h, lane)
+        if target is None:
+            target = self._next_objective(h, brain.lane)
+        if target is None:
+            pts = gm.LANE_PATHS[brain.lane]
+            p = gm.point_at_t(pts, 0.62 if h.team == TEAM_DEV else 0.38)
+            w.issue_order(h, "attack_move", p[0], p[1])
+            return
+
+        # Строение бьём только если рядом есть свои крипы: в одиночку это
+        # упирается в защиту от бэкдора и бесполезно
+        if self._creeps_near(h.team, target.x, target.y):
+            w.issue_order(h, "attack_unit", target.x, target.y, target.id)
+        else:
+            w.issue_order(h, "attack_move", target.x, target.y)
+
+    def _next_objective(self, h, lane: str):
+        """Ближайшее к нам уязвимое строение противника."""
+        w = self.world
+        enemy = enemy_of(h.team)
+        best, best_d = None, 1e18
+        for u in w.units.values():
+            if not u.alive or u.team != enemy or not u.is_building:
+                continue
+            if u.etype == "fountain":
+                continue
+            if u.lane not in (lane, "base", ""):
+                continue
+            if w.is_invulnerable_building(u):
+                continue
+            d = vmath.dist_sq(h.x, h.y, u.x, u.y)
+            if d < best_d:
+                best_d, best = d, u
+        return best
+
+    def _creeps_near(self, team: int, x: float, y: float) -> bool:
+        for u in self.world.spatial.query(x, y, 1100.0):
+            if u.alive and u.team == team and u.etype == E_CREEP:
+                if vmath.dist_sq(x, y, u.x, u.y) <= 1100.0 ** 2:
+                    return True
+        return False
 
     def _use_abilities(self, h, target) -> None:
         w = self.world

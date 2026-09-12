@@ -12,12 +12,14 @@ const ABIL_KEYS = ['KeyQ', 'KeyW', 'KeyE', 'KeyR'];
 export const targeting = { active: false, kind: '', idx: 0, range: 0, aoe: 0, mx: null, my: null };
 export const ui = { scoreboard: false, shop: false, chatFocus: false };
 
-let cv, onToggleShop, onToggleScore, edgePan = { x: 0, y: 0 };
+let cv, onToggleShop, onToggleScore, onToggleHelp, edgePan = { x: 0, y: 0 };
+const hooks_toggleHelp = () => onToggleHelp && onToggleHelp();
 
 export function initInput(canvas, hooks) {
   cv = canvas;
   onToggleShop = hooks.toggleShop;
   onToggleScore = hooks.toggleScore;
+  onToggleHelp = hooks.toggleHelp;
 
   cv.addEventListener('contextmenu', e => e.preventDefault());
   cv.addEventListener('mousedown', onMouseDown);
@@ -113,6 +115,7 @@ function onKeyDown(e) {
     case 'KeyA': startGroundTarget('attack_move'); return;
     case 'KeyF': cam.follow = !cam.follow; return;
     case 'KeyG': send({ t: 'glyph' }); return;
+    case 'F1': hooks_toggleHelp(); e.preventDefault(); return;
   }
 
   const ai = ABIL_KEYS.indexOf(e.code);

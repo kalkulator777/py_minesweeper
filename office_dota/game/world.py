@@ -11,6 +11,7 @@ import random
 from . import abilities as ab, combat, content as C, gamemap as gm, vmath
 from .consts import (
     IS_DISABLED as IS_DISABLED_MASK,
+    DMG_PURE,
     ATTACK_RANGE_BUFFER, DAY_NIGHT_PERIOD, DELIVERY_TIME, DMG_MAGICAL, DMG_PHYSICAL,
     E_ANCIENT, E_BARRACKS, E_CREEP, E_FOUNTAIN, E_HERO, E_ILLUSION, E_NEUTRAL,
     E_SUMMON, E_TOWER, E_WARD, F_CHANNELING, F_INVISIBLE, F_TAUNTED, F_TRUESIGHT,
@@ -105,6 +106,7 @@ class World:
         self._channel_bound: dict[int, list[tuple[int, str]]] = {}
         self._proc_ready: dict[tuple[int, str], float] = {}
         self._backdoor_accum = 0.0
+        self._reflecting = False
 
         self.events: list[dict] = []
         self.next_wave_time = C.WAVES.get("first_wave_time", 30.0)
@@ -356,6 +358,7 @@ class World:
         recheck = self._backdoor_accum >= 0.5
         if recheck:
             self._backdoor_accum = 0.0
+        self._reflecting = False
 
         for ts in self.teams.values():
             if ts.glyph_cooldown > 0:
@@ -1039,16 +1042,32 @@ class World:
             if m.data and "reflect_effects" in m.data:
                 reactions.append((m.data["reflect_effects"],
                                   float(m.data.get("reflect_pct", 0))))
-        for inner, pct in reactions:
-            if not inner:
-                continue
-            scaled = inner
-            if pct:
-                scaled = [dict(e, amount=amount * pct / 100.0)
-                          if e.get("op") == "damage" else e for e in inner]
-            ctx = ab.EffectContext(target, attacker, attacker.x, attacker.y,
-                                   1, "reflect", source=SRC_ITEM)
-            ab.execute(self, ctx, scaled)
+        if not reactions:
+            return
+        # Отражённый урон сам не отражается. Иначе два предмета возврата
+        # друг против друга уходят в бесконечную рекурсию и роняют матч.
+        if self._reflecting:
+            return
+        self._reflecting = True
+        try:
+            for inner, pct in reactions:
+                if pct and not inner:
+                    # Одного процента достаточно: описывать операцию урона
+                    # в данных не нужно
+                    scaled = [{"op": "damage", "dtype": DMG_PURE,
+                               "amount": amount * pct / 100.0, "target": "hit"}]
+                elif pct:
+                    scaled = [dict(e, amount=amount * pct / 100.0)
+                              if e.get("op") == "damage" else e for e in inner]
+                elif inner:
+                    scaled = inner
+                else:
+                    continue
+                ctx = ab.EffectContext(target, attacker, attacker.x, attacker.y,
+                                       1, "reflect", source=SRC_ITEM)
+                ab.execute(self, ctx, scaled)
+        finally:
+            self._reflecting = False
         # Телепорт блокируется уроном от героя — как кинжал в доте
         if attacker.etype == E_HERO and isinstance(target, Hero):
             for it in target.all_items():

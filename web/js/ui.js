@@ -239,6 +239,16 @@ export function initHud() {
   $('btn-pause').onclick = () => send({ t: G.state.paused ? 'unpause' : 'pause' });
   const bg = $('btn-glyph');
   if (bg) bg.onclick = () => send({ t: 'glyph' });
+  const bh = $('btn-help');
+  if (bh) bh.onclick = () => toggleHelp(true);
+  $('help-close').onclick = () => toggleHelp(false);
+  // Первый раз справку показываем сами: человек сел играть, а не читать README
+  try {
+    if (!localStorage.getItem('od_seen_help')) {
+      toggleHelp(true);
+      localStorage.setItem('od_seen_help', '1');
+    }
+  } catch (e) { /* приватное окно — просто не показываем */ }
   const bs = $('btn-save');
   if (bs) bs.onclick = () => {
     const name = prompt('Название сохранения:', 'обед');
@@ -435,6 +445,10 @@ function renderRespawn(me) {
 // ==========================================================================
 //  Магазин
 // ==========================================================================
+export function toggleHelp(on) {
+  $('help').classList.toggle('hidden', !on);
+}
+
 export function toggleShop(on) {
   ui.shop = on;
   $('shop').classList.toggle('hidden', !on);

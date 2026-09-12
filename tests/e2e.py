@@ -85,6 +85,16 @@ def main() -> int:
             p1.wait_for_selector("#screen-game.active", timeout=6000)
             p2.wait_for_selector("#screen-game.active", timeout=6000)
             check("матч начался у обоих", True)
+
+            # Справка показывается новичку сама — закрываем её
+            p1.wait_for_timeout(500)
+            check("справка показана при первом входе", p1.is_visible("#help"))
+            p1.screenshot(path=f"{SHOTS}/09-help.png")
+            for pg in (p1, p2):
+                if pg.is_visible("#help"):
+                    pg.click("#help-close")
+            p1.wait_for_timeout(300)
+            check("справка закрылась", not p1.is_visible("#help"))
             p1.wait_for_timeout(3000)
             p1.screenshot(path=f"{SHOTS}/03-game.png")
 

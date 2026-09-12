@@ -304,3 +304,15 @@ code{font-family:ui-monospace,'Cascadia Code',monospace}
 .saves-block{background:var(--panel);border:1px solid var(--line);
   border-radius:var(--radius);padding:14px}
 .saves-block h3{margin:0 0 8px;font-size:15px}
+
+#help{position:absolute;inset:0;z-index:22;display:grid;place-items:center;
+  background:#050709dd;backdrop-filter:blur(3px)}
+.help-card{max-width:720px;text-align:left}
+.help-card h2{text-align:center}
+.help-cols{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+.help-cols table{width:100%;border-collapse:collapse;font-size:13px}
+.help-cols td{padding:5px 0;border-bottom:1px solid var(--line)}
+.help-cols td:last-child{text-align:right;white-space:nowrap}
+.help-note{margin:16px 0;line-height:1.6;text-align:center}
+#help .btn{display:block;margin:0 auto}
+@media (max-width:700px){.help-cols{grid-template-columns:1fr}}
