@@ -576,5 +576,24 @@ class Room:
         from .persistence import list_saves
         self.send(p, {"t": "saves", "list": list_saves()})
 
+    def _cmd_buyback(self, p: Player, m: dict) -> None:
+        h = self.world.heroes.get(p.hero_id) if self.world else None
+        if h is None:
+            return
+        ok, why = self.world.buyback(h)
+        if ok:
+            self.broadcast_system(f"{p.name} выкупился")
+        else:
+            self.send(p, {"t": "err", "m": why, "quiet": 1})
+
+    def _cmd_glyph(self, p: Player, m: dict) -> None:
+        if self.world is None or p.team < 0:
+            return
+        ok, why = self.world.use_glyph(p.team)
+        if ok:
+            self.broadcast_system(f"{p.name} применил глиф укрепления")
+        else:
+            self.send(p, {"t": "err", "m": why, "quiet": 1})
+
     def _cmd_ping(self, p: Player, m: dict) -> None:
         self.send(p, {"t": "pong", "c": m.get("c")})

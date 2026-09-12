@@ -112,6 +112,7 @@ function onKeyDown(e) {
     case 'KeyH': issueOrder('hold', 0, 0, 0); return;
     case 'KeyA': startGroundTarget('attack_move'); return;
     case 'KeyF': cam.follow = !cam.follow; return;
+    case 'KeyG': send({ t: 'glyph' }); return;
   }
 
   const ai = ABIL_KEYS.indexOf(e.code);

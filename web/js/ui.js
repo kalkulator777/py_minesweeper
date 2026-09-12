@@ -237,6 +237,8 @@ export function initHud() {
   $('btn-shop').onclick = () => toggleShop(!ui.shop);
   $('shop-close').onclick = () => toggleShop(false);
   $('btn-pause').onclick = () => send({ t: G.state.paused ? 'unpause' : 'pause' });
+  const bg = $('btn-glyph');
+  if (bg) bg.onclick = () => send({ t: 'glyph' });
   const bs = $('btn-save');
   if (bs) bs.onclick = () => {
     const name = prompt('Название сохранения:', 'обед');
@@ -266,6 +268,12 @@ export function renderHud() {
     `<div>скор <b>${me.ms}</b></div>`;
 
   $('gold').textContent = `${me.gold} ₿`;
+  const bg = $('btn-glyph');
+  if (bg) {
+    const cd = me.glyph || 0;
+    bg.textContent = cd > 0 ? `Глиф ${Math.ceil(cd)}с` : 'Глиф';
+    bg.disabled = cd > 0;
+  }
   renderAbilities(me);
   renderItems(me);
   renderBuffs(me);
@@ -410,9 +418,18 @@ function renderRespawn(me) {
   const box = $('respawn');
   if (me.alive) { box.classList.add('hidden'); return; }
   box.classList.remove('hidden');
+  const can = me.bbcost != null && me.gold >= me.bbcost && (me.bbcd || 0) <= 0;
+  const note = (me.bbcd || 0) > 0
+    ? `Выкуп откатится через ${Math.ceil(me.bbcd)} с`
+    : `Выкуп: ${me.bbcost} ₿`;
   box.innerHTML = `<div class="muted">Возрождение через</div>
     <div class="big">${Math.ceil(me.resp)}</div>
     <div class="muted">Магазин работает и пока ты мёртв</div>`;
+  const b = el('button', 'btn primary', note);
+  b.style.marginTop = '12px';
+  b.disabled = !can;
+  b.onclick = () => send({ t: 'buyback' });
+  box.appendChild(b);
 }
 
 // ==========================================================================

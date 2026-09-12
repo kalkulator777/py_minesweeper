@@ -134,6 +134,9 @@ def hero_detail(h, world) -> dict:
         "resp": round(h.respawn_timer, 1),
         "alive": 1 if h.alive else 0,
         "deliv": [{"k": d["key"], "t": round(d["t"], 1)} for d in h.deliveries],
+        "bbcost": round(world.buyback_cost(h)),
+        "bbcd": round(h.buyback_cooldown, 1),
+        "glyph": round(world.teams[h.team].glyph_cooldown, 1),
     }
 
 

@@ -237,6 +237,14 @@ JUNGLE: dict = getattr(_t, "JUNGLE", {})
 RUNES: dict = getattr(_t, "RUNES", {})
 ECONOMY: dict = getattr(_t, "ECONOMY", _FALLBACK_ECONOMY)
 RESPAWN_TABLE: list = getattr(_t, "RESPAWN_TABLE", _FALLBACK_RESPAWN)
+BUILDING_RULES: dict = getattr(_t, "BUILDING_RULES", None) or {
+    "backdoor_damage_taken_pct": 0.25,
+    "backdoor_regen_hp_per_sec": 25.0,
+    "backdoor_active_while_lane_creeps_absent_sec": 5.0,
+    "out_of_combat_regen_delay_sec": 15.0,
+    "glyph_cooldown_sec": 180.0,
+    "glyph_duration_sec": 6.0,
+}
 
 HUMAN_POWER: float = getattr(_t, "HUMAN_POWER", 1.0)
 BOT_POWER: float = getattr(_t, "BOT_POWER", 0.6)

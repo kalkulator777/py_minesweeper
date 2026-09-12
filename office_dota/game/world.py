@@ -22,6 +22,9 @@ from .consts import (
 from .entities import Building, Creep, Hero, Projectile, Unit
 
 
+BACKDOOR_MULT_DEFAULT = 0.25
+
+
 def _has_blink(defn: dict) -> bool:
     act = defn.get("active") or {}
     return any(e.get("op") == "blink" for e in act.get("effects", []))
@@ -101,6 +104,7 @@ class World:
         self._toggle_acc: dict[tuple[int, int], float] = {}
         self._channel_bound: dict[int, list[tuple[int, str]]] = {}
         self._proc_ready: dict[tuple[int, str], float] = {}
+        self._backdoor_accum = 0.0
 
         self.events: list[dict] = []
         self.next_wave_time = C.WAVES.get("first_wave_time", 30.0)
@@ -286,6 +290,7 @@ class World:
         self._tick_projectiles(dt)
         self._tick_respawn(dt)
         self._tick_waves()
+        self._tick_buildings(dt)
         self.neutrals.tick(dt)
         self.bots.tick(dt)
         self._tick_passive_gold(dt)
@@ -335,6 +340,79 @@ class World:
                 h.deliveries = [d for d in h.deliveries if d["t"] > 0]
                 for d in ready:
                     self.deliver_item(h, d["key"])
+
+    def _tick_buildings(self, dt: float) -> None:
+        """Защита от бэкдора, реген вне боя и таймер глифа.
+
+        Без защиты от бэкдора один герой с ускорением тихо сносит трон,
+        пока команда дерётся на другом конце карты. В доте это лечится
+        тем, что строение без своих крипов рядом почти не получает урона
+        и быстро восстанавливается.
+        """
+        rules = C.BUILDING_RULES
+        delay = float(rules.get("out_of_combat_regen_delay_sec", 15.0))
+        regen = float(rules.get("backdoor_regen_hp_per_sec", 25.0))
+        self._backdoor_accum += dt
+        recheck = self._backdoor_accum >= 0.5
+        if recheck:
+            self._backdoor_accum = 0.0
+
+        for ts in self.teams.values():
+            if ts.glyph_cooldown > 0:
+                ts.glyph_cooldown = max(0.0, ts.glyph_cooldown - dt)
+
+        for b in self.units.values():
+            if not b.is_building or not b.alive or b.etype == E_FOUNTAIN:
+                continue
+            if recheck:
+                b.backdoor_protected = self._is_backdoor(b)
+            if b.hp < b.max_hp and self.time - b.last_attacked_time > delay:
+                b.hp = min(b.max_hp, b.hp + regen * dt)
+
+    def _is_backdoor(self, b: Building) -> bool:
+        """Строение считается защищённым, если рядом нет своих линейных крипов."""
+        for u in self.spatial.query(b.x, b.y, 1200.0):
+            if u.alive and u.team == b.team and u.etype == E_CREEP:
+                if b.dist_sq_to(u) <= 1200.0 ** 2:
+                    return False
+        return True
+
+    def use_glyph(self, team: int) -> tuple[bool, str]:
+        """Глиф укрепления: все строения команды неуязвимы несколько секунд."""
+        ts = self.teams[team]
+        if ts.glyph_cooldown > 0:
+            return False, f"глиф откатится через {int(ts.glyph_cooldown)} с"
+        rules = C.BUILDING_RULES
+        ts.glyph_cooldown = float(rules.get("glyph_cooldown_sec", 180.0))
+        duration = float(rules.get("glyph_duration_sec", 6.0))
+        from .modifiers import invulnerable
+        for b in self.units.values():
+            if b.is_building and b.alive and b.team == team:
+                b.add_modifier(invulnerable(duration, 0, "glyph"))
+        self.emit("glyph", team=team, dur=duration)
+        return True, ""
+
+    def buyback(self, h: Hero) -> tuple[bool, str]:
+        """Выкуп: вернуться в бой немедленно за деньги."""
+        if h.alive:
+            return False, "ты жив"
+        if h.buyback_cooldown > 0:
+            return False, f"выкуп откатится через {int(h.buyback_cooldown)} с"
+        cost = self.buyback_cost(h)
+        if h.gold < cost:
+            return False, f"нужно {int(cost)} ₿"
+        cfg = C.ECONOMY.get("buyback", {})
+        h.gold -= cost
+        h.buyback_cooldown = float(cfg.get("cooldown_sec", 240.0))
+        self.respawn_hero(h)
+        self.emit("buyback", id=h.id, cost=round(cost))
+        return True, ""
+
+    def buyback_cost(self, h: Hero) -> float:
+        cfg = C.ECONOMY.get("buyback", {})
+        return (float(cfg.get("base", 100.0))
+                + (h.level ** 2) * float(cfg.get("level_sq_factor", 1.5))
+                + self.time * float(cfg.get("time_factor", 0.5)))
 
     def _tick_toggles(self, dt: float) -> None:
         """Включённые способности применяются раз в интервал и жрут ману.

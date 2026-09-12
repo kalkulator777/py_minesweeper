@@ -51,6 +51,11 @@ def compute_damage(target, amount: float, dtype: str, attacker=None,
     """
     if amount <= 0.0:
         return 0.0, 0.0
+    # Флаги живут на юните и обновляются при пересчёте. Без этой строки
+    # неуязвимость, магический иммунитет и эфирная форма начинали бы
+    # действовать только со следующего тика — целый класс ошибок вида
+    # «наложил щит и тут же получил урон сквозь него».
+    target.ensure_stats()
     raw = amount
     flags = target.flags
 
@@ -79,9 +84,21 @@ def compute_damage(target, amount: float, dtype: str, attacker=None,
             pass
 
     amount *= target.damage_taken_mult
+
+    # Защита от бэкдора: строение без своих крипов рядом почти не получает
+    # урона. Иначе один герой тихо сносит трон, пока идёт драка на другом
+    # конце карты.
+    if target.is_building and getattr(target, "backdoor_protected", False):
+        amount *= _backdoor_mult()
+
     if amount < 0.0:
         amount = 0.0
     return amount, raw - amount
+
+
+def _backdoor_mult() -> float:
+    from . import content as C
+    return float(C.BUILDING_RULES.get("backdoor_damage_taken_pct", 0.25))
 
 
 def apply_damage(world, target, amount: float, dtype: str, attacker=None,
