@@ -22,7 +22,7 @@ from ..game.consts import (
 from ..game.items import Item
 from ..game.world import World
 
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 SAVE_DIR = os.path.join(os.path.expanduser("~"), ".office_dota", "saves")
 
 
@@ -109,6 +109,15 @@ def _dump_hero(h) -> dict:
         "kills": h.kills, "deaths": h.deaths, "assists": h.assists,
         "last_hits": h.last_hits, "denies": h.denies,
         "respawn": h.respawn_timer, "streak": h.kill_streak,
+        "buyback_cd": h.buyback_cooldown,
+        "stash": list(h.stash),
+        # Баффы сохраняем: без этого сейв обнулял откат выкупа всей команде,
+        # то есть был эксплойтом, а не просто потерей данных
+        "mods": [{"k": m.key, "n": m.name, "r": m.remaining, "d": m.duration,
+                  "stats": m.stats, "flags": m.flags, "st": m.stacks,
+                  "sh": m.shield_amount, "sht": m.shield_type,
+                  "src": m.source_id, "perm": m.permanent, "data": m.data}
+                 for m in h.modifiers if not m.is_aura_effect and not m.permanent],
         "hero_damage": h.hero_damage, "tower_damage": h.tower_damage,
         "healing": h.healing_done,
         "abilities": [{"k": a.key, "lvl": a.level, "cd": a.cooldown,
@@ -222,6 +231,19 @@ def _restore(room, data: dict) -> None:
                 h.backpack[i] = Item(sd["k"])
         h.deliveries = [{"key": d["key"], "t": float(d["t"])}
                         for d in hd.get("deliveries", [])]
+        h.buyback_cooldown = float(hd.get("buyback_cd", 0.0))
+        h.stash = list(hd.get("stash", []))
+        from ..game.modifiers import Modifier
+        for md in hd.get("mods", []):
+            m = Modifier(md["k"], float(md.get("d", 0)), name=md.get("n", ""),
+                         stats=md.get("stats") or {}, flags=int(md.get("flags", 0)),
+                         shield_amount=float(md.get("sh", 0)),
+                         shield_type=md.get("sht", "all"),
+                         source_id=int(md.get("src", 0)),
+                         data=md.get("data") or {})
+            m.remaining = float(md.get("r", m.duration))
+            m.stacks = int(md.get("st", 1))
+            h.modifiers.append(m)
 
         h.x, h.y = float(hd["x"]), float(hd["y"])
         h.alive = bool(hd["alive"])

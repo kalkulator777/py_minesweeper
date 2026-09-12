@@ -54,5 +54,5 @@ class GameSocket(tornado.websocket.WebSocketHandler):
 
     def on_close(self) -> None:
         if self.pid:
-            self.room.leave(self.pid)
+            self.room.leave(self.pid, socket=self)
             self.room.broadcast_state()

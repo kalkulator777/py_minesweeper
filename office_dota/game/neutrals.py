@@ -141,8 +141,8 @@ class Neutrals:
                 c.base_vision_day = float(spec.get("vision", 800))
                 c.bounty_gold = w.rng.uniform(*spec.get("bounty_gold", [40, 50]))
                 c.bounty_xp = float(spec.get("bounty_xp", 40))
-                c.bash_chance = float(spec.get("bash_chance", 0.0))
-                c.bash_duration = float(spec.get("bash_duration", 0.0))
+                c.innate_bash_chance = float(spec.get("bash_chance", 0.0))
+                c.innate_bash_duration = float(spec.get("bash_duration", 0.0))
                 c.is_ranged = c.base_attack_range > 200
                 c.camp_id = camp.cid
                 c.spawn_x, c.spawn_y = camp.x, camp.y
@@ -150,8 +150,6 @@ class Neutrals:
                 c.attack_point = 0.3
                 c.recompute()
                 c.hp = c.max_hp
-                if spec.get("bash_chance"):
-                    c._stats_dirty = False
                 w.register(c)
                 camp.alive_ids.add(c.id)
                 idx += 1

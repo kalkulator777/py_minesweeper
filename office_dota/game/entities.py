@@ -82,6 +82,10 @@ class Unit(Entity, ModifierHost):
         "spell_amp", "cooldown_reduction", "damage_taken_mult", "heal_taken_mult",
         "vision", "crit_chance", "crit_mult", "lifesteal", "cleave_pct", "cleave_radius",
         "bash_chance", "bash_duration",
+        # Врождённые величины: не выводятся из статов, поэтому хранятся
+        # отдельно и применяются В КОНЦЕ пересчёта. Запись прямо в
+        # производное поле молча терялась при первом же ensure_stats.
+        "damage_out_mult", "innate_bash_chance", "innate_bash_duration",
         # текущее состояние
         "hp", "mana",
         # приказы
@@ -143,6 +147,9 @@ class Unit(Entity, ModifierHost):
         self.cleave_radius = 0.0
         self.bash_chance = 0.0
         self.bash_duration = 0.0
+        self.damage_out_mult = 1.0
+        self.innate_bash_chance = 0.0
+        self.innate_bash_duration = 0.0
 
         self.hp = 200.0
         self.mana = 0.0
@@ -241,8 +248,14 @@ class Unit(Entity, ModifierHost):
         self.lifesteal = st.get("_lifesteal", 0.0)
         self.cleave_pct = st.get("_cleave_pct", 0.0)
         self.cleave_radius = st.get("_cleave_radius", 0.0)
-        self.bash_chance = st.get("_bash_chance", 0.0)
-        self.bash_duration = st.get("_bash_duration", 0.0)
+        self.bash_chance = max(st.get("_bash_chance", 0.0), self.innate_bash_chance)
+        self.bash_duration = max(st.get("_bash_duration", 0.0), self.innate_bash_duration)
+
+        # Врождённый множитель исходящего урона (иллюзии) — последним,
+        # чтобы его не затёрли слагаемые выше
+        if self.damage_out_mult != 1.0:
+            self.damage_min *= self.damage_out_mult
+            self.damage_max *= self.damage_out_mult
 
         if self.hp > self.max_hp:
             self.hp = self.max_hp

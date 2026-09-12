@@ -112,10 +112,20 @@ class Room:
         mgmt = sum(1 for p in self.players.values() if p.team == TEAM_MGMT)
         return TEAM_DEV if dev <= mgmt else TEAM_MGMT
 
-    def leave(self, pid: str) -> None:
+    def leave(self, pid: str, socket=None) -> None:
+        """Игрок ушёл. socket — тот, что закрылся.
+
+        Проверка обязательна: при перезагрузке вкладки новый сокет успевает
+        поздороваться раньше, чем Tornado заметит обрыв старого. Без неё
+        закрытие устаревшего сокета помечало уже вернувшегося человека
+        отключённым, матч навсегда вставал в паузу «ждём его», и снять её
+        было нельзя — только отдать его героя боту.
+        """
         p = self.players.get(pid)
         if p is None:
             return
+        if socket is not None and p.socket is not None and p.socket is not socket:
+            return                      # закрылся устаревший сокет, человек уже вернулся
         p.connected = False
         p.socket = None
         if self.phase == PHASE_LOBBY:

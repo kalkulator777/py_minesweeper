@@ -8,7 +8,7 @@ import random
 from .consts import (
     ARMOR_K, DMG_MAGICAL, DMG_PHYSICAL, DMG_PURE,
     F_CHEAT_DEATH, F_ETHEREAL, F_INVULNERABLE, F_MAGIC_IMMUNE,
-    MAX_ATTACK_SPEED, MIN_ATTACK_SPEED, SRC_ABILITY, SRC_ATTACK,
+    MAX_ATTACK_SPEED, MIN_ATTACK_SPEED, SRC_ABILITY, SRC_ATTACK, SRC_ITEM,
 )
 
 ETHEREAL_MAGIC_AMP = 0.40          # эфирная форма: +40% получаемого магического урона
@@ -78,10 +78,12 @@ def compute_damage(target, amount: float, dtype: str, attacker=None,
         amount *= physical_multiplier(target.armor)
 
     elif dtype == DMG_PURE:
-        if (flags & F_MAGIC_IMMUNE) and not pierces_magic_immunity and source == SRC_ABILITY:
-            # Чистый урон проходит сквозь магический иммунитет только если
-            # способность это явно заявляет. Так же ведёт себя дота.
-            pass
+        # Магический иммунитет режет и чистый урон от способностей —
+        # так же ведёт себя дота. Пробить это можно только явным
+        # pierces_magic_immunity у самой способности.
+        if (flags & F_MAGIC_IMMUNE) and not pierces_magic_immunity \
+                and source in (SRC_ABILITY, SRC_ITEM):
+            return 0.0, raw
 
     amount *= target.damage_taken_mult
 

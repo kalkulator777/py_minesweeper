@@ -137,7 +137,9 @@ class World:
         return u if (u is not None and u.alive) else None
 
     def all_heroes(self):
-        return [h for h in self.heroes.values() if h.alive]
+        """Только настоящие герои. Иллюзии тоже лежат в self.heroes,
+        но глобальные способности по ним бить не должны."""
+        return [h for h in self.heroes.values() if h.alive and h.etype == E_HERO]
 
     def schedule(self, delay: float, fn) -> None:
         self._scheduled.append((self.time + max(0.0, delay), fn))
@@ -335,6 +337,9 @@ class World:
                     it.tick(dt)
             if h.buyback_cooldown > 0:
                 h.buyback_cooldown = max(0.0, h.buyback_cooldown - dt)
+            # Ожидающее на складе выдаём, как только появился слот
+            while h.stash and (h.free_item_slot() >= 0 or h.free_backpack_slot() >= 0):
+                self.deliver_item(h, h.stash.pop(0))
             for d in h.deliveries:
                 d["t"] -= dt
             ready = [d for d in h.deliveries if d["t"] <= 0]
@@ -522,7 +527,9 @@ class World:
             return
         from .consts import IS_DISABLED
         ended = []
-        for uid, ch in self.channels.items():
+        # Копия обязательна: тик канала может убить юнита, а kill_unit
+        # снимает его канал — обход по живому словарю падал бы
+        for uid, ch in list(self.channels.items()):
             u = self.units.get(uid)
             if u is None or not u.alive or (u.flags & IS_DISABLED):
                 ended.append(uid)
@@ -665,11 +672,11 @@ class World:
         for u in alive:
             if u.id in self.forced_moves or u.id in self.channels:
                 continue
+            if u.attack_cd > 0.0:
+                u.attack_cd = max(0.0, u.attack_cd - dt)
             if u.attack_windup > 0.0:
                 self._progress_windup(u, dt)
                 continue
-            if u.attack_cd > 0.0:
-                u.attack_cd = max(0.0, u.attack_cd - dt)
 
             order = u.order
             if order == ORDER_ATTACK_UNIT:
@@ -791,8 +798,18 @@ class World:
 
     # --- атака -------------------------------------------------------------
     def _begin_attack(self, u: Unit, target: Unit) -> None:
+        """Откат запускается с началом замаха, а не после удара.
+
+        Иначе интервал между ударами равен замах + BAT/IAS вместо BAT/IAS,
+        и предметы на скорость атаки дают вдвое меньше обещанного.
+        """
         u.attack_target_id = target.id
-        u.attack_windup = u.attack_point
+        cycle = combat.attack_time(u.bat, u.attack_speed)
+        # Замах — доля цикла атаки, а не постоянная величина: в доте
+        # анимация ускоряется вместе со скоростью атаки. Иначе замах
+        # становится полом для интервала и съедает бонусы к скорости.
+        u.attack_windup = u.attack_point * (cycle / max(0.01, u.base_bat))
+        u.attack_cd = cycle
         u.last_attacked_time = self.time
 
     def _progress_windup(self, u: Unit, dt: float) -> None:
@@ -805,7 +822,6 @@ class World:
             return
         if not u.in_attack_range(target):
             return
-        u.attack_cd = combat.attack_time(u.bat, u.attack_speed)
         if u.is_ranged and u.projectile_speed > 0:
             self._spawn_attack_projectile(u, target)
         else:
@@ -850,6 +866,8 @@ class World:
             for e in self.units_in_radius(target.x, target.y, u.cleave_radius,
                                           team=None):
                 if e.team == u.team or e is target or e.is_building:
+                    continue
+                if not e.can_be_attacked:
                     continue
                 combat.apply_damage(self, e, res.dealt * u.cleave_pct, DMG_PHYSICAL,
                                     u, SRC_ATTACK)
@@ -1023,10 +1041,9 @@ class World:
             il.add_modifier(Modifier("illusion", duration, name="Иллюзия",
                                      stats={"damage_taken_pct": in_pct - 100.0},
                                      dispellable=False, permanent=False))
+            il.damage_out_mult = out_pct / 100.0
             il.recompute()
             il.hp = il.max_hp
-            il.damage_min *= out_pct / 100.0
-            il.damage_max *= out_pct / 100.0
             self.register(il)
             self.schedule(duration, lambda u=il: self.kill_unit(u, None, "expire"))
 
@@ -1042,6 +1059,13 @@ class World:
             if m.data and "reflect_effects" in m.data:
                 reactions.append((m.data["reflect_effects"],
                                   float(m.data.get("reflect_pct", 0))))
+        # Телепорт блокируется уроном независимо от того, есть ли у цели
+        # предмет возврата: ранний выход отсюда ломал блокировку кинжала.
+        if attacker.etype == E_HERO and isinstance(target, Hero):
+            for it in target.all_items():
+                if it.defn.get("blocked_by_damage") or _has_blink(it.defn):
+                    it.disabled_until = self.time + float(
+                        it.defn.get("damage_block_sec", 3.0))
         if not reactions:
             return
         # Отражённый урон сам не отражается. Иначе два предмета возврата
@@ -1068,12 +1092,6 @@ class World:
                 ab.execute(self, ctx, scaled)
         finally:
             self._reflecting = False
-        # Телепорт блокируется уроном от героя — как кинжал в доте
-        if attacker.etype == E_HERO and isinstance(target, Hero):
-            for it in target.all_items():
-                if it.defn.get("blocked_by_damage") or _has_blink(it.defn):
-                    it.disabled_until = self.time + float(
-                        it.defn.get("damage_block_sec", 3.0))
 
     def record_damage(self, attacker, target, amount: float, dtype: str, key: str) -> None:
         if attacker is not None:
@@ -1263,7 +1281,9 @@ class World:
         elif u.is_building:
             self._on_building_death(u, owner)
         elif u.etype in (E_CREEP, E_NEUTRAL, E_SUMMON):
-            self._on_creep_death(u, owner)
+            # Истёкший по времени призыв никто не убивал — награды нет
+            if reason != "expire":
+                self._on_creep_death(u, owner)
             if u.etype == E_NEUTRAL:
                 self.neutrals.on_camp_unit_died(u)
 
@@ -1274,11 +1294,24 @@ class World:
         # неуязвимости соседних башен, и клиенту нужно показать руины.
         # Герои остаются, потому что возрождаются. Удаляются только крипы.
         if not u.is_building and u.etype != E_HERO:
-            self.schedule(0.6, lambda uid=u.id: self.units.pop(uid, None))
+            def _cleanup(uid=u.id):
+                self.units.pop(uid, None)
+                self.heroes.pop(uid, None)   # иллюзии тоже лежат здесь
+            self.schedule(0.6, _cleanup)
 
-    def _income_mult(self, team: int) -> float:
+    def _income_mult(self, team: int, source: str = "") -> float:
+        """Множитель дохода команды с учётом её численности.
+
+        Источник дохода важен: набор флагов dynamic_applies_to решает, на что
+        гандикап распространяется. По умолчанию он не трогает опыт — тот и так
+        концентрируется, когда героев в команде меньше.
+        """
         if not C.DYNAMIC_ECONOMY_ENABLED:
             return 1.0
+        if source:
+            flags = C.ECONOMY.get("dynamic_applies_to") or {}
+            if not flags.get(source, True):
+                return 1.0
         own = [h for h in self.heroes.values() if h.team == team and h.etype == E_HERO]
         enemy = [h for h in self.heroes.values()
                  if h.team == enemy_of(team) and h.etype == E_HERO]
@@ -1289,23 +1322,31 @@ class World:
         return (C.team_income_multiplier(len(own))
                 * C.underdog_multiplier(own_p, enemy_p or own_p))
 
+    GOLD_SOURCE_FLAG = {
+        "creep": "creep_gold", "neutral": "neutral_gold",
+        "kill": "hero_kill_gold", "assist": "hero_kill_gold",
+        "bounty_rune": "rune_gold",
+    }
+
     def grant_gold(self, hero: Hero, amount: float, reason: str = "",
                    apply_mult: bool = True) -> float:
         if hero is None or hero.etype != E_HERO:
             return 0.0
         if apply_mult:
-            amount *= self._income_mult(hero.team)
+            amount *= self._income_mult(
+                hero.team, self.GOLD_SOURCE_FLAG.get(reason, "creep_gold"))
         hero.gold += amount
         hero.total_gold_earned += amount
         self.teams[hero.team].gold_earned += amount
         self.emit("gold", id=hero.id, v=round(amount), why=reason)
         return amount
 
-    def grant_xp(self, hero: Hero, amount: float, apply_mult: bool = True) -> None:
+    def grant_xp(self, hero: Hero, amount: float, apply_mult: bool = True,
+                 source: str = "creep_xp") -> None:
         if hero is None or hero.etype != E_HERO or not hero.alive:
             return
         if apply_mult:
-            amount *= self._income_mult(hero.team)
+            amount *= self._income_mult(hero.team, source)
         hero.xp += amount
         new_level = C.level_for_xp(hero.xp)
         while hero.level < new_level:
@@ -1370,7 +1411,8 @@ class World:
                 self.emit("item_drop", id=h.id, k=it.key,
                           x=round(h.x), y=round(h.y))
         h.deaths += 1
-        h.kill_streak = 0
+        victim_streak = h.kill_streak     # читаем ДО обнуления, иначе награда
+        h.kill_streak = 0                 # за серию всегда брала нулевой элемент
         h.respawn_timer = C.respawn_time(h.level)
         h.purge(True)
         h.modifiers = [m for m in h.modifiers if m.permanent]
@@ -1385,8 +1427,8 @@ class World:
         xp_reward = xp_base + xp_per_level * h.level
 
         streaks = eco.get("streak_bounty_gold") or C.ECONOMY.get("streak_bonus") or []
-        if streaks and h.kill_streak < len(streaks):
-            bounty += float(streaks[min(h.kill_streak, len(streaks) - 1)])
+        if streaks:
+            bounty += float(streaks[min(victim_streak, len(streaks) - 1)])
 
         if isinstance(killer, Hero) and killer.team != h.team:
             killer.kills += 1
@@ -1465,7 +1507,9 @@ class World:
 
         if h.gold < price:
             return False, "не хватает бюджета"
-        if h.free_item_slot() < 0 and h.free_backpack_slot() < 0 and missing is None:
+        if h.free_item_slot() < 0 and h.free_backpack_slot() < 0:
+            # Для рецептов тоже: иначе компоненты уезжали на склад,
+            # сборка их не находила, и предмет пропадал вместе с деньгами
             return False, "нет свободных слотов"
 
         h.gold -= price
@@ -1500,7 +1544,10 @@ class World:
             if bslot >= 0:
                 h.backpack[bslot] = Item(key)
             else:
+                # Мест нет — предмет ждёт на складе и приедет, как только
+                # слот освободится. Раньше он просто исчезал вместе с деньгами.
                 h.stash.append(key)
+                self.emit("stash", id=h.id, k=key)
                 return
         h._stats_dirty = True
         # Попробовать собрать всё, во что входит этот предмет
