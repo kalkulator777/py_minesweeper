@@ -295,3 +295,8 @@ code{font-family:ui-monospace,'Cascadia Code',monospace}
   #chat{display:none}
   #scoreboard{min-width:auto;width:94vw}
 }
+
+#latejoin{position:absolute;inset:0;z-index:19;display:grid;place-items:center;
+  background:#050709d8;backdrop-filter:blur(3px)}
+#latejoin .pause-card{max-width:760px}
+#late-grid{margin-top:12px;max-height:56vh;overflow:auto}

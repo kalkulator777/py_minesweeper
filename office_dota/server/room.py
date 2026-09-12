@@ -347,8 +347,10 @@ class Room:
             self.broadcast_state()
 
     def _cmd_pick_hero(self, p: Player, m: dict) -> None:
-        if self.phase != PHASE_LOBBY:
+        if self.phase not in (PHASE_LOBBY, PHASE_PREGAME, PHASE_RUNNING):
             return
+        if self.phase != PHASE_LOBBY and p.hero_id:
+            return                       # герой уже есть, менять на ходу нельзя
         key = str(m.get("hero", ""))
         if key not in C.HEROES:
             self.send(p, {"t": "err", "m": "нет такого героя"})
@@ -359,7 +361,44 @@ class Room:
             self.send(p, {"t": "err", "m": "герой уже занят в вашей команде"})
             return
         p.hero_key = key
+        if self.phase != PHASE_LOBBY:
+            self._spawn_latecomer(p)
         self.broadcast_state()
+
+    def _spawn_latecomer(self, p: Player) -> None:
+        """Опоздавший получает героя с догоняющей компенсацией.
+
+        Без компенсации заходить в матч на десятой минуте бессмысленно:
+        первый же размен закончится смертью. Даём средний уровень и
+        средний нетворс своей команды, слегка урезанные.
+        """
+        if self.world is None:
+            return
+        if p.team < 0:
+            p.team = self._auto_team()
+        mates = [h for h in self.world.heroes.values()
+                 if h.team == p.team and h.etype == "hero"]
+        h = self.world.spawn_hero(p.team, p.hero_key, name=p.name)
+        p.hero_id = h.id
+        p.view = ClientView(p.team)
+
+        if mates:
+            avg_level = sum(m.level for m in mates) / len(mates)
+            avg_gold = sum(m.total_gold_earned for m in mates) / len(mates)
+        else:
+            # Пустая команда — равняемся на противника, иначе опоздавший
+            # выходит первым уровнем против восемнадцатого
+            enemies = [e for e in self.world.heroes.values()
+                       if e.team != p.team and e.etype == "hero"]
+            avg_level = (sum(e.level for e in enemies) / len(enemies)) if enemies else 1
+            avg_gold = (sum(e.total_gold_earned for e in enemies) / len(enemies)) if enemies else 0
+
+        target_level = max(1, int(avg_level * 0.85))
+        if target_level > 1:
+            self.world.grant_xp(h, C.xp_for_level(target_level), apply_mult=False)
+        h.gold = max(h.gold, avg_gold * 0.7)
+        self.broadcast_system(f"{p.name} подключился к матчу "
+                              f"(уровень {h.level}, бюджет {int(h.gold)})")
 
     def _cmd_ready(self, p: Player, m: dict) -> None:
         p.ready = bool(m.get("v", True))

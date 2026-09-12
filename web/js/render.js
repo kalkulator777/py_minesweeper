@@ -6,7 +6,7 @@
 
 import { G, interpolated, myHero, myTeam } from './net.js';
 
-export const cam = { x: 3600, y: 3600, zoom: 0.42, follow: true };
+export const cam = { x: 3600, y: 3600, zoom: 0.58, follow: true };
 
 let cv, ctx, fog, fctx, W = 0, H = 0, dpr = 1;
 
@@ -64,7 +64,7 @@ export function panBy(dx, dy) {
 }
 
 export function zoomBy(f) {
-  cam.zoom = Math.max(0.16, Math.min(1.1, cam.zoom * f));
+  cam.zoom = Math.max(0.18, Math.min(1.4, cam.zoom * f));
 }
 
 function clampCam() {
@@ -100,13 +100,13 @@ function drawGround() {
   const [x0, y0] = w2s(0, 0);
   const size = M.size * cam.zoom;
 
-  ctx.fillStyle = '#141a21';
+  ctx.fillStyle = '#1a212a';
   ctx.fillRect(x0, y0, size, size);
 
   // ковролин: едва заметная сетка, чтобы читалось движение
   const step = 600 * cam.zoom;
   if (step > 12) {
-    ctx.strokeStyle = '#192129'; ctx.lineWidth = 1;
+    ctx.strokeStyle = '#212a35'; ctx.lineWidth = 1;
     ctx.beginPath();
     for (let gx = 0; gx <= M.size; gx += 600) {
       const [sx] = w2s(gx, 0);
@@ -119,22 +119,27 @@ function drawGround() {
     ctx.stroke();
   }
 
-  // зоны баз
+  // зоны баз — лёгкий намёк плюс рамка, а не заливка на пол-экрана
   for (const [team, r] of Object.entries(M.bases)) {
     const [bx, by] = w2s(r[0], r[1]);
-    ctx.fillStyle = team === '0' ? '#14291c' : '#2a1414';
-    ctx.fillRect(bx, by, (r[2] - r[0]) * cam.zoom, (r[3] - r[1]) * cam.zoom);
+    const bw = (r[2] - r[0]) * cam.zoom, bh = (r[3] - r[1]) * cam.zoom;
+    ctx.fillStyle = team === '0' ? 'rgba(63,191,111,.07)' : 'rgba(217,76,76,.07)';
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.strokeStyle = team === '0' ? 'rgba(63,191,111,.35)' : 'rgba(217,76,76,.35)';
+    ctx.setLineDash([10, 8]); ctx.lineWidth = 2;
+    ctx.strokeRect(bx, by, bw, bh);
+    ctx.setLineDash([]);
   }
 
   // река
-  ctx.strokeStyle = '#1b2c3a'; ctx.lineWidth = 520 * cam.zoom;
+  ctx.strokeStyle = '#22384a'; ctx.lineWidth = 520 * cam.zoom;
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   poly(M.river); ctx.stroke();
 
   // линии
-  ctx.strokeStyle = '#1e262f'; ctx.lineWidth = 440 * cam.zoom;
+  ctx.strokeStyle = '#27313d'; ctx.lineWidth = 440 * cam.zoom;
   for (const pts of Object.values(M.lanes)) { poly(pts); ctx.stroke(); }
-  ctx.strokeStyle = '#232d38'; ctx.lineWidth = 300 * cam.zoom;
+  ctx.strokeStyle = '#2e3a48'; ctx.lineWidth = 300 * cam.zoom;
   for (const pts of Object.values(M.lanes)) { poly(pts); ctx.stroke(); }
 
   // стены — офисные комнаты
@@ -142,9 +147,9 @@ function drawGround() {
   for (const [a, b, c, d] of M.walls) {
     const [sx, sy] = w2s(a, b);
     const w = (c - a) * cam.zoom, h = (d - b) * cam.zoom;
-    ctx.fillStyle = '#252e3a';
+    ctx.fillStyle = '#323d4c';
     ctx.fillRect(sx, sy, w, h);
-    ctx.strokeStyle = '#39465a';
+    ctx.strokeStyle = '#4a5a70';
     ctx.strokeRect(sx + .5, sy + .5, w - 1, h - 1);
   }
 
@@ -194,7 +199,7 @@ function ring(x, y, r, color) {
 function drawFog() {
   const team = myTeam();
   fctx.clearRect(0, 0, W, H);
-  fctx.fillStyle = 'rgba(4,7,11,.80)';
+  fctx.fillStyle = 'rgba(5,8,13,.72)';
   fctx.fillRect(0, 0, W, H);
   fctx.globalCompositeOperation = 'destination-out';
   for (const u of G.units.values()) {
@@ -203,7 +208,7 @@ function drawFog() {
     const [sx, sy] = w2s(p.x, p.y);
     const vision = (u.e === 'hero' ? 1800 : u.is_building ? 1500 : 900) * cam.zoom;
     if (sx < -vision || sy < -vision || sx > W + vision || sy > H + vision) continue;
-    const g = fctx.createRadialGradient(sx, sy, vision * 0.62, sx, sy, vision);
+    const g = fctx.createRadialGradient(sx, sy, vision * 0.45, sx, sy, vision);
     g.addColorStop(0, 'rgba(0,0,0,1)');
     g.addColorStop(1, 'rgba(0,0,0,0)');
     fctx.fillStyle = g;
@@ -278,8 +283,16 @@ function drawUnit(u) {
   }
   ctx.globalAlpha = 1;
 
-  // свой герой — золотое кольцо
-  if (G.me && u.id === G.me.id) ring(sx, sy, r + 5, '#f0c04a');
+  // свой герой — золотое кольцо и круг дальности атаки
+  if (G.me && u.id === G.me.id) {
+    ring(sx, sy, r + 5, '#f0c04a');
+    const ar = (G.me.arange || 0) * cam.zoom;
+    if (ar > r + 8) {
+      ctx.setLineDash([3, 7]);
+      ring(sx, sy, ar, 'rgba(240,192,74,.22)');
+      ctx.setLineDash([]);
+    }
+  }
 }
 
 function roundRect(x, y, w, h, rad) {

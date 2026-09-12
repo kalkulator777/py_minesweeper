@@ -5,7 +5,7 @@ import { initRender, draw, drawMinimap, resize } from './render.js';
 import { initInput, tickCamera, castPreview, ui } from './input.js';
 import {
   showScreen, initMenu, initLobby, renderLobby, initHud, renderHud,
-  renderTop, renderScore, renderPause, renderKillfeed, renderEnd,
+  renderTop, renderScore, renderPause, renderKillfeed, renderEnd, renderLateJoin,
   pushChat, toggleShop, toggleScore, toast,
 } from './ui.js';
 
@@ -42,6 +42,7 @@ G.onState = (st) => {
   }
   renderPause();
   renderEnd();
+  renderLateJoin();
 };
 
 G.onChat = (m) => pushChat(m);

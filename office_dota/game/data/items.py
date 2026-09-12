@@ -25,6 +25,10 @@
 * Предмет без `components` продаётся целиком, у него `recipe_cost == 0`.
   Для собираемого предмета `cost == сумма cost компонентов + recipe_cost`.
   Повторяющийся ключ в `components` означает «нужно две штуки».
+* Поля сверх §7, добавленные движком: `charges` (обязательно у расходников),
+  `drop_on_death`, `target_types`, `blocked_by_damage` + `damage_block_sec`.
+  Всё это проверяется в validate(); неизвестные поля запрещены, чтобы опечатка
+  в данных не превращалась в молча отключённую механику.
 * Баланс цен — дотовский (DESIGN.md §2, Turbo). Доход в Turbo примерно ×2,
   поэтому цены не резались: игроки просто доходят до предметов вдвое быстрее.
   Ориентир: тир 3 — с 8–10-й минуты, тир 4 — с 12–15-й. Раньше 10-й минуты
@@ -46,6 +50,7 @@ ITEMS: dict[str, dict] = {
         "components": [],
         "recipe_cost": 0,
         "shop": "consumable",
+        "charges": 1,
         "stats": {},
         "passives": [],
         "active": {
@@ -71,6 +76,7 @@ ITEMS: dict[str, dict] = {
         "components": [],
         "recipe_cost": 0,
         "shop": "consumable",
+        "charges": 2,
         "stats": {},
         "passives": [],
         "active": {
@@ -87,6 +93,32 @@ ITEMS: dict[str, dict] = {
         "tier": 1,
     },
 
+    # прототип: Dust of Appearance
+    "activity_tracker": {
+        "key": "activity_tracker",
+        "name": "Трекер активности",
+        "prototype": "Dust of Appearance",
+        "cost": 80,
+        "components": [],
+        "recipe_cost": 0,
+        "shop": "consumable",
+        "charges": 2,
+        "stats": {},
+        "passives": [],
+        "active": {
+            "targeting": "none",
+            "cast_range": 0,
+            "cooldown": 20,
+            "mana_cost": 0,
+            "effects": [
+                {"op": "true_sight", "duration": 12, "radius": 1050, "target": "caster"},
+            ],
+        },
+        "desc": "12 секунд видно всех, кто выставил себе «невидимку», в радиусе 1050. "
+                "Прямой ответ на «Не беспокоить»: статус статусом, а логи не врут.",
+        "tier": 1,
+    },
+
     # прототип: Smoke of Deceit
     "dnd_status": {
         "key": "dnd_status",
@@ -96,6 +128,7 @@ ITEMS: dict[str, dict] = {
         "components": [],
         "recipe_cost": 0,
         "shop": "consumable",
+        "charges": 1,
         "stats": {},
         "passives": [],
         "active": {
@@ -124,6 +157,7 @@ ITEMS: dict[str, dict] = {
         "components": [],
         "recipe_cost": 0,
         "shop": "consumable",
+        "charges": 1,
         "stats": {},
         "passives": [],
         "active": {
@@ -151,6 +185,7 @@ ITEMS: dict[str, dict] = {
         "components": [],
         "recipe_cost": 0,
         "shop": "consumable",
+        "charges": 1,
         "stats": {},
         "passives": [],
         "active": {
@@ -260,11 +295,11 @@ ITEMS: dict[str, dict] = {
         "components": [],
         "recipe_cost": 0,
         "shop": "base",
-        "stats": {"damage": 12, "vision_day": 150, "vision_night": 150},
+        "stats": {"damage": 12, "vision_day": 150, "vision_night": 75},
         "passives": [],
         "active": None,
-        "desc": "+12 к урону и +150 к обзору. На одном мониторе работать невозможно, "
-                "это все знают.",
+        "desc": "+12 к урону, +150 к дневному обзору и +75 к ночному. "
+                "На одном мониторе работать невозможно, это все знают.",
         "tier": 1,
     },
 
@@ -338,7 +373,7 @@ ITEMS: dict[str, dict] = {
             "mana_cost": 0,
             "effects": [
                 {"op": "heal", "amount": 200, "target": "caster"},
-                {"op": "stat_buff", "stats": {"mana_regen": 100}, "duration": 2, "target": "caster"},
+                {"op": "restore_mana", "amount": 200, "pct": 0, "target": "caster"},
             ],
         },
         "desc": "В ящике стола есть всё: мгновенно 200 HP и 200 маны. "
@@ -412,10 +447,8 @@ ITEMS: dict[str, dict] = {
             "cooldown": 22,
             "mana_cost": 0,
             "effects": [
-                {"op": "stat_buff",
-                 "stats": {"armor": 900, "damage_taken_pct": 40, "move_speed": 30},
-                 "duration": 4, "target": "caster"},
-                {"op": "disarm", "duration": 4, "target": "caster"},
+                {"op": "ghost", "duration": 4, "magic_amp": 40, "target": "caster"},
+                {"op": "stat_buff", "stats": {"move_speed": 30}, "duration": 4, "target": "caster"},
             ],
         },
         "desc": "4 секунды вас физически нет в офисе: обычные атаки не проходят, "
@@ -458,9 +491,7 @@ ITEMS: dict[str, dict] = {
             "mana_cost": 25,
             "effects": [
                 {"op": "stat_buff", "stats": {"damage_taken_pct": -20}, "duration": 4.5, "target": "caster"},
-                {"op": "on_take_damage", "effects": [
-                    {"op": "damage", "dtype": "pure", "amount": 100, "target": "hit"},
-                ]},
+                {"op": "on_take_damage", "duration": 4.5, "reflect_pct": 100, "effects": []},
             ],
         },
         "desc": "4.5 секунды всё, что прилетело вам, уходит обидчику чистым уроном — "
@@ -484,12 +515,18 @@ ITEMS: dict[str, dict] = {
             "cast_range": 600,
             "cooldown": 90,
             "mana_cost": 0,
+            "target_types": ["creep", "neutral"],
             "effects": [
-                {"op": "execute", "hp_threshold": 10000, "on_kill": []},
+                {"op": "execute", "hp_threshold": 10000,
+                 "target_types": ["creep", "neutral"],
+                 "on_kill": [
+                     {"op": "grant_gold", "amount": 190, "target": "caster"},
+                     {"op": "grant_xp", "amount": 150, "target": "caster"},
+                 ]},
             ],
         },
         "desc": "Списывает подрядчика со счёта: крип мгновенно исчезает, "
-                "а вы получаете 250₿ и 2.5× опыта. По героям не работает.",
+                "а вы получаете 190₿ и 150 опыта. В героя картой не ткнуть.",
         "tier": 2,
     },
 
@@ -534,6 +571,8 @@ ITEMS: dict[str, dict] = {
             "cast_range": 1200,
             "cooldown": 15,
             "mana_cost": 0,
+            "blocked_by_damage": True,
+            "damage_block_sec": 3.0,
             "effects": [
                 {"op": "blink", "max_dist": 1200, "to": "point"},
             ],
@@ -595,11 +634,7 @@ ITEMS: dict[str, dict] = {
             "mana_cost": 150,
             "effects": [
                 {"op": "purge", "strength": "basic", "target": "hit"},
-                {"op": "invulnerable", "duration": 2.5, "target": "hit"},
-                {"op": "root", "duration": 2.5, "target": "hit"},
-                {"op": "silence", "duration": 2.5, "target": "hit"},
-                {"op": "disarm", "duration": 2.5, "target": "hit"},
-                {"op": "delayed", "delay": 2.5, "effects": [
+                {"op": "cyclone", "duration": 2.5, "target": "hit", "on_land": [
                     {"op": "damage", "dtype": "magical", "amount": 100, "target": "hit"},
                 ]},
             ],
@@ -761,7 +796,7 @@ ITEMS: dict[str, dict] = {
             "effects": [
                 {"op": "area", "radius": 1200, "filter": "ally", "max_targets": 0, "effects": [
                     {"op": "heal", "amount": 350, "target": "hit"},
-                    {"op": "stat_buff", "stats": {"mana_regen": 60}, "duration": 2, "target": "hit"},
+                    {"op": "restore_mana", "amount": 120, "pct": 0, "target": "hit"},
                     {"op": "purge", "strength": "basic", "target": "hit"},
                 ]},
             ],
@@ -844,6 +879,7 @@ ITEMS: dict[str, dict] = {
         "stats": {"damage": 350},
         "passives": [],
         "active": None,
+        "drop_on_death": True,
         "desc": "+350 к урону. При смерти выпадает на пол, и поднять её может кто угодно — "
                 "включая менеджмент. Покупается целиком, по частям премию не выдают.",
         "tier": 4,
@@ -860,6 +896,7 @@ SHOP_LAYOUT: dict = {
     "Расходники": [
         "energy_drink",
         "observer_ward",
+        "activity_tracker",
         "dnd_status",
         "corporate_taxi",
         "coffee_mug",
@@ -907,75 +944,55 @@ SHOP_LAYOUT: dict = {
 
 
 # ==========================================================================
-# Чего не хватило в ABILITY_SPEC.md, чтобы собрать магазин честно
+# Чего по-прежнему не хватает движку
 # ==========================================================================
-# Всё ниже сейчас обойдено через разрешённые примитивы (§3), но обход виден
-# игроку и ломает узнаваемость. Каждый пункт — отдельный запрос к движку.
+# Прошлый список закрыт: grant_gold/grant_xp, target_types, cyclone, ghost,
+# restore_mana, true_sight, drop_on_death, reflect_pct + duration у
+# on_take_damage, blocked_by_damage — всё это уже используется выше.
+# Осталось следующее. Каждый пункт сейчас обойдён, и обход виден игроку.
 
 ENGINE_REQUESTS: list[str] = [
-    "charges: заряды предмета. «Ящик стола» (Magic Wand) обязан копить заряды от "
-    "вражеских кастов и тратить их — сейчас это просто активка с фиксированным "
-    "хилом и кулдауном 13 с. Расходники тоже просятся в стаки по 3.",
+    "накопление зарядов от событий. Поле charges статично и тратится расходниками, "
+    "а «Ящик стола» (Magic Wand) обязан копить заряды от вражеских кастов рядом. "
+    "Сейчас это активка с фиксированными 200 HP / 200 маны и кулдауном 13 с — "
+    "предмет работает, но перестал быть наградой за хорошую линию.",
 
-    "op restore_mana: мгновенное восстановление маны. В §3 есть heal (HP), но "
-    "маны нет вообще. Сейчас эмулируется stat_buff с mana_regen 100 на 2 с "
-    "(«Ящик стола», «Корпоратив») — на бумаге это мана за 2 секунды, а не мгновенно.",
+    "break_on_damage у stat_buff. Это НЕ blocked_by_damage: тот запрещает "
+    "применить активку после урона, а нужно прерывать уже работающий бафф. "
+    "«Кружка кофе» и «Банка энергетика» (Salve, Clarity) обязаны гаснуть от урона "
+    "героя — сейчас это только текст в desc, и оба расходника сильнее оригинала.",
 
-    "op grant_gold / grant_xp: «Корпоративная карта» (Hand of Midas) физически не "
-    "может выдать 250₿ и 2.5× опыта. Сейчас там execute с hp_threshold 10000, "
-    "то есть предмет просто убивает крипа, а награда не начисляется.",
+    "grant_xp должен уметь множитель, а не только флат. Midas в доте даёт 2.5× опыта "
+    "убитого юнита, поэтому он ценен на больших нейтралах. Флатовые 150 делают "
+    "«Корпоративную карту» одинаковой на стажёре и на боссе леса.",
 
-    "targeting-фильтр по типу юнита: Midas должен наводиться только на не-героев. "
-    "В §2 у targeting нет фильтра (filter есть только внутри op area).",
+    "правила уникальности модификаторов и аур. Минус-броня «Публичного разноса» "
+    "(Desolator) не должна складываться сама с собой, а аура «Тимбилдинга» (+2 брони) "
+    "не должна стакаться с аурой «Корпоратива» (+3), который из неё же и собран. "
+    "Сейчас два саппорта с «Тимбилдингом» дают команде +4 брони.",
 
-    "op cyclone: подъём в воздух — неуязвим, не выбирается целью, обездвижен. "
-    "«Внезапный созвон» (Eul's) собран из invulnerable + root + silence + disarm; "
-    "цель остаётся выбираемой, и снаряды по ней долетают.",
+    "подтвердить семантику отрицательного damage_taken_pct. §5 описывает ключ только "
+    "как «положительное = получает больше урона». «Ответить всем» ставит себе -20, "
+    "рассчитывая на снижение входящего урона на 20%. Если движок это не так читает — "
+    "предмет тихо не работает.",
 
-    "op ghost / физическая неуязвимость: «Больничный» (Ghost Scepter) сделан через "
-    "stat_buff armor 900 — по формуле §6 это 98.2% снижения, но не 100%, "
-    "и любой источник -armor этот костыль ломает.",
+    "неподвижный юнит-наблюдатель для op summon. «Камера наблюдения» ставит "
+    "unit 'observer_camera': нужен юнит без атаки и движения, невидимый для врага, "
+    "со своим радиусом обзора. Это описание юнита, а не предмета — вопрос к data/units.",
 
-    "on_take_damage: нужны поля duration (жить только пока активка) и "
-    "amount_pct_of_incoming (вернуть долю полученного урона). «Ответить всем» "
-    "(Blade Mail) сейчас возвращает фиксированные 100 чистого урона и формально "
-    "висит вечно.",
+    # Подтверждено координатором как «не будет» — оставлено, чтобы не забыть,
+    # что эти предметы намеренно отличаются от прототипов.
+    "stat_swap / toggle предметов: Power Treads («Беговые кроссовки») зафиксированы "
+    "на str 8 и не переключают атрибут.",
 
-    "блокировка активки по триггеру урона: у Blink Dagger (VPN) каст запрещён "
-    "3 с после урона от вражеского героя. Выразить нечем — в описании обещано, "
-    "в данных нет.",
+    "убывающая длительность при повторном использовании: «Отгул» (BKB) держит "
+    "фиксированные 7 с вместо дотовских 10→5.",
 
-    "убывающая длительность при повторном использовании: BKB («Отгул») в доте "
-    "идёт 10→9→8→7→6→5 с. Сейчас зафиксировано 7 с навсегда — это либо сильнее, "
-    "либо слабее оригинала в зависимости от длины боя.",
+    "ultimate_upgrade: «Повышение» (Aghanim) не меняет ульту, а выдаёт "
+    "spell_amp 8 + cooldown_reduction 10.",
 
-    "drop_on_death: «Годовая премия» (Divine Rapier) обязана выпадать на землю и "
-    "подбираться кем угодно. Без этого предмет просто самый дорогой стат-стик "
-    "без риска, и весь смысл теряется.",
-
-    "флаг ultimate_upgrade в схеме предмета (§7): Aghanim («Повышение») должен "
-    "менять ульту героя. Сейчас заменён на spell_amp 8 + cooldown_reduction 10 — "
-    "узнаётся по цене и иконке, но не по эффекту.",
-
-    "op stat_swap / toggle у предмета: Power Treads («Беговые кроссовки») "
-    "переключают бонусный атрибут. Зафиксировано на str 8.",
-
-    "break_on_damage у stat_buff: реген-расходники (Healing Salve, Clarity — "
-    "«Кружка кофе», «Энергетик») обязаны прерываться уроном от героя. "
-    "Сейчас это только текст в desc.",
-
-    "отложенный накопленный урон: Orchid («Чёрный список») в доте копит урон за "
-    "время сайленса и выдаёт в конце. Заменено на damage_taken_pct 30 — "
-    "по итогу похоже, по ощущению нет (нет «взрыва» в конце).",
-
-    "правила уникальности модификаторов: минус-броня от «Публичного разноса» "
-    "(Desolator) не должна складываться сама с собой, ауры одноимённых предметов "
-    "не должны стакаться. В §3 понятия уникальности нет вообще.",
-
-    "неподвижный юнит-наблюдатель для op summon: «Камера наблюдения» ставит "
-    "unit 'observer_camera' — движку нужен юнит без атаки и движения, невидимый "
-    "для врага, со своим радиусом обзора. Плюс истинное зрение (сентри/Gem) "
-    "не выражается ничем из §3 — детекторов в магазине пока нет.",
+    "отложенный накопленный урон: «Чёрный список» (Orchid) не взрывается в конце "
+    "сайленса, а всё время держит damage_taken_pct 30.",
 ]
 
 
@@ -983,7 +1000,7 @@ ENGINE_REQUESTS: list[str] = [
 # Валидация
 # ==========================================================================
 
-# §3 ABILITY_SPEC.md — полный список разрешённых операций.
+# §3 ABILITY_SPEC.md + операции, добавленные движком по прошлому ENGINE_REQUESTS.
 _ALLOWED_OPS = frozenset({
     "damage", "heal", "dot", "execute", "lifesteal_burst",
     "stun", "slow", "silence", "root", "disarm", "hex", "taunt", "purge",
@@ -993,6 +1010,9 @@ _ALLOWED_OPS = frozenset({
     "passive_stats", "proc_attack", "crit", "bash", "evasion", "lifesteal",
     "cleave", "on_kill", "on_take_damage",
     "summon", "illusion",
+    # расширение движка
+    "chain", "restore_mana", "mana_burn", "grant_gold", "grant_xp",
+    "true_sight", "ghost", "cyclone",
 })
 
 # §5 ABILITY_SPEC.md — полный список характеристик, на которые можно влиять.
@@ -1008,23 +1028,37 @@ _ALLOWED_STATS = frozenset({
     "vision_day", "vision_night",
 })
 
-# §7 — shop; §2 — targeting.
 _ALLOWED_SHOPS = frozenset({"base", "secret", "consumable"})
 _ALLOWED_TARGETING = frozenset({
     "none", "point", "unit_enemy", "unit_ally", "unit_any",
     "vector", "toggle", "passive", "channel",
 })
 _ALLOWED_TARGETS = frozenset({"hit", "caster", "allies_in_radius", "enemies_in_radius"})
+# "enemy" больше не задевает строения — для них есть "buildings" и "enemy_all".
+_ALLOWED_FILTERS = frozenset({"enemy", "ally", "all", "creeps", "buildings", "enemy_all"})
+_ALLOWED_TARGET_TYPES = frozenset({"creep", "neutral", "hero", "tower", "barracks"})
 
 # Ключи, под которыми у операций-обёрток лежат вложенные эффекты.
-_NESTED_EFFECT_KEYS = ("effects", "on_hit", "on_tick", "on_kill")
+_NESTED_EFFECT_KEYS = ("effects", "on_hit", "on_tick", "on_kill", "on_land")
 
 _REQUIRED_FIELDS = (
     "key", "name", "prototype", "cost", "components", "recipe_cost",
     "shop", "stats", "passives", "active", "desc", "tier",
 )
+# Опечатка в имени поля = молча отключённая механика, поэтому белый список.
+_KNOWN_ITEM_FIELDS = frozenset(_REQUIRED_FIELDS) | {
+    "charges", "drop_on_death", "target_types",
+    "blocked_by_damage", "damage_block_sec",
+}
+_KNOWN_ACTIVE_FIELDS = frozenset({
+    "targeting", "cast_range", "cooldown", "mana_cost", "effects",
+    "target_types", "blocked_by_damage", "damage_block_sec",
+})
 
 _SHOP_CATEGORIES = ("Расходники", "Атрибуты", "Броня", "Оружие", "Артефакты")
+
+# Выше этого порога execute перестаёт быть добиванием и становится «убить кого угодно».
+_EXECUTE_SAFE_THRESHOLD = 1500
 
 
 def _check_stats(stats, where, problems):
@@ -1042,8 +1076,29 @@ def _check_stats(stats, where, problems):
             problems.append(f"{where}: значение {stat_key!r} должно быть числом, получено {value!r}")
 
 
+def _check_target_types(value, where, problems):
+    """target_types — непустой список из известных типов юнитов."""
+    if not isinstance(value, list) or not value:
+        problems.append(f"{where}: target_types должен быть непустым списком, получено {value!r}")
+        return
+    unknown = sorted(set(value) - _ALLOWED_TARGET_TYPES)
+    if unknown:
+        problems.append(
+            f"{where}: неизвестные target_types {unknown}, "
+            f"разрешены {sorted(_ALLOWED_TARGET_TYPES)}"
+        )
+
+
+def _max_number(value):
+    """Число или список чисел по уровням (§8.1) -> максимум."""
+    if isinstance(value, list):
+        numbers = [v for v in value if isinstance(v, (int, float))]
+        return max(numbers) if numbers else 0
+    return value if isinstance(value, (int, float)) else 0
+
+
 def _check_effects(effects, where, problems):
-    """Рекурсивно проверяет список эффектов: op из §3, stats из §5, target из §4."""
+    """Рекурсивно: op из §3, stats из §5, target из §4, filter и target_types."""
     if not isinstance(effects, list):
         problems.append(f"{where}: ожидался список эффектов, получено {type(effects).__name__}")
         return
@@ -1058,8 +1113,8 @@ def _check_effects(effects, where, problems):
             continue
         if op not in _ALLOWED_OPS:
             problems.append(
-                f"{sub}: op={op!r} отсутствует в ABILITY_SPEC.md §3 "
-                f"(правило §8.2 — новые op выдумывать нельзя)"
+                f"{sub}: op={op!r} не поддерживается движком "
+                f"(правило ABILITY_SPEC.md §8.2 — новые op выдумывать нельзя)"
             )
         if "stats" in eff:
             _check_stats(eff["stats"], f"{sub}(op={op})", problems)
@@ -1069,24 +1124,67 @@ def _check_effects(effects, where, problems):
                 f"{sub}: target={target!r} отсутствует в ABILITY_SPEC.md §4 "
                 f"(разрешены: {', '.join(sorted(_ALLOWED_TARGETS))})"
             )
+        if "filter" in eff and eff["filter"] not in _ALLOWED_FILTERS:
+            problems.append(
+                f"{sub}: filter={eff['filter']!r}, разрешены {sorted(_ALLOWED_FILTERS)}"
+            )
+        if "target_types" in eff:
+            _check_target_types(eff["target_types"], sub, problems)
+
+        # Защита от бага «execute убивает героя одним нажатием».
+        if op == "execute":
+            threshold = _max_number(eff.get("hp_threshold"))
+            types = eff.get("target_types")
+            if threshold > _EXECUTE_SAFE_THRESHOLD:
+                if not types:
+                    problems.append(
+                        f"{sub}: execute с hp_threshold={threshold} убьёт кого угодно, "
+                        f"включая героя. Такому порогу обязателен target_types "
+                        f"без 'hero' (например ['creep', 'neutral'])."
+                    )
+                elif "hero" in types:
+                    problems.append(
+                        f"{sub}: execute с hp_threshold={threshold} и 'hero' в target_types — "
+                        f"это мгновенное убийство любого героя."
+                    )
+
+        if op == "on_take_damage":
+            if "duration" not in eff:
+                problems.append(
+                    f"{sub}: у on_take_damage нет duration — движок подставит своё значение, "
+                    f"и предмет будет работать не так, как написано в desc"
+                )
+            reflect = eff.get("reflect_pct")
+            if reflect is not None and not (0 <= reflect <= 100):
+                problems.append(f"{sub}: reflect_pct={reflect!r}, ожидалось 0..100")
+            if not reflect and not eff.get("effects"):
+                problems.append(
+                    f"{sub}: on_take_damage без reflect_pct и без effects ничего не делает"
+                )
+
         for nested_key in _NESTED_EFFECT_KEYS:
             if nested_key in eff:
                 _check_effects(eff[nested_key], f"{sub}.{nested_key}", problems)
 
 
 def _check_schema(key, item, problems):
-    """Поля предмета по §7 + базовая типизация."""
+    """Поля предмета по §7 + расширения движка + базовая типизация."""
     for field in _REQUIRED_FIELDS:
         if field not in item:
             problems.append(f"{key}: нет обязательного поля {field!r} (ABILITY_SPEC.md §7)")
+    unknown = sorted(set(item) - _KNOWN_ITEM_FIELDS)
+    if unknown:
+        problems.append(
+            f"{key}: неизвестные поля {unknown} — опечатка молча отключит механику. "
+            f"Разрешены: {sorted(_KNOWN_ITEM_FIELDS)}"
+        )
     if item.get("key") != key:
         problems.append(f"{key}: поле 'key' == {item.get('key')!r}, а ключ словаря — {key!r}")
     if key != key.lower() or " " in key or "-" in key:
         problems.append(f"{key}: ключ обязан быть snake_case в нижнем регистре")
-    if item.get("shop") not in _ALLOWED_SHOPS:
-        problems.append(
-            f"{key}: shop={item.get('shop')!r}, разрешено только {sorted(_ALLOWED_SHOPS)}"
-        )
+    shop = item.get("shop")
+    if shop not in _ALLOWED_SHOPS:
+        problems.append(f"{key}: shop={shop!r}, разрешено только {sorted(_ALLOWED_SHOPS)}")
     if item.get("tier") not in (1, 2, 3, 4):
         problems.append(f"{key}: tier={item.get('tier')!r}, ожидалось 1..4")
     if not item.get("name"):
@@ -1096,6 +1194,26 @@ def _check_schema(key, item, problems):
     if not item.get("prototype"):
         problems.append(f"{key}: не указан prototype — предмет Dota 2, который он воспроизводит")
 
+    # charges: обязателен расходникам и бессмыслен у остальных.
+    charges = item.get("charges")
+    if shop == "consumable":
+        if not isinstance(charges, int) or isinstance(charges, bool) or charges < 1:
+            problems.append(
+                f"{key}: расходнику нужен charges >= 1 (сколько применений в покупке), "
+                f"получено {charges!r}"
+            )
+    elif charges is not None:
+        problems.append(
+            f"{key}: charges={charges!r} у не-расходника. Накопительные заряды "
+            f"движок пока не поддерживает — см. ENGINE_REQUESTS"
+        )
+
+    if "drop_on_death" in item and not isinstance(item["drop_on_death"], bool):
+        problems.append(f"{key}: drop_on_death={item['drop_on_death']!r}, ожидался bool")
+    if "target_types" in item:
+        _check_target_types(item["target_types"], key, problems)
+    _check_damage_block(item, key, problems)
+
     _check_stats(item.get("stats", {}), f"{key}.stats", problems)
     _check_effects(item.get("passives", []), f"{key}.passives", problems)
 
@@ -1104,6 +1222,9 @@ def _check_schema(key, item, problems):
         if not isinstance(active, dict):
             problems.append(f"{key}.active: ожидался dict или None, получено {type(active).__name__}")
         else:
+            unknown = sorted(set(active) - _KNOWN_ACTIVE_FIELDS)
+            if unknown:
+                problems.append(f"{key}.active: неизвестные поля {unknown}")
             targeting = active.get("targeting")
             if targeting not in _ALLOWED_TARGETING:
                 problems.append(
@@ -1112,9 +1233,28 @@ def _check_schema(key, item, problems):
             for field in ("cooldown", "mana_cost"):
                 if field not in active:
                     problems.append(f"{key}.active: нет поля {field!r}")
+            if "target_types" in active:
+                _check_target_types(active["target_types"], f"{key}.active", problems)
+            _check_damage_block(active, f"{key}.active", problems)
             _check_effects(active.get("effects", []), f"{key}.active.effects", problems)
             if not active.get("effects"):
                 problems.append(f"{key}.active: активка без эффектов — тогда должно быть None")
+
+
+def _check_damage_block(holder, where, problems):
+    """blocked_by_damage и damage_block_sec идут только парой."""
+    blocked = holder.get("blocked_by_damage")
+    seconds = holder.get("damage_block_sec")
+    if blocked is not None and not isinstance(blocked, bool):
+        problems.append(f"{where}: blocked_by_damage={blocked!r}, ожидался bool")
+    if blocked and (not isinstance(seconds, (int, float)) or seconds <= 0):
+        problems.append(
+            f"{where}: blocked_by_damage=True требует damage_block_sec > 0, получено {seconds!r}"
+        )
+    if seconds is not None and not blocked:
+        problems.append(
+            f"{where}: damage_block_sec={seconds!r} без blocked_by_damage=True ничего не делает"
+        )
 
 
 def _check_recipe_math(key, item, problems):
@@ -1206,9 +1346,7 @@ def _check_shop_layout(problems):
             continue
         for key in keys:
             if key not in ITEMS:
-                problems.append(
-                    f"SHOP_LAYOUT[{category!r}]: предмета {key!r} нет в ITEMS"
-                )
+                problems.append(f"SHOP_LAYOUT[{category!r}]: предмета {key!r} нет в ITEMS")
                 continue
             seen.setdefault(key, []).append(category)
 
@@ -1233,9 +1371,7 @@ def _check_shop_layout(problems):
             )
     for key, item in ITEMS.items():
         if item.get("shop") == "consumable" and key not in SHOP_LAYOUT.get("Расходники", []):
-            problems.append(
-                f"{key}: shop='consumable', но лежит не в категории «Расходники»"
-            )
+            problems.append(f"{key}: shop='consumable', но лежит не в категории «Расходники»")
 
 
 def validate() -> None:

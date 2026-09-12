@@ -51,6 +51,9 @@ _ALLOWED_OPS = frozenset({
     "cleave", "on_kill", "on_take_damage",
     # призыв
     "summon", "illusion",
+    # добавлено движком после первого прохода ростера (см. ENGINE_REQUESTS)
+    "chain", "true_sight", "mana_burn", "restore_mana", "grant_gold", "grant_xp",
+    "cyclone", "ghost",
 })
 
 _ALLOWED_TARGETING = frozenset({
@@ -60,7 +63,7 @@ _ALLOWED_TARGETING = frozenset({
 
 _ALLOWED_TARGET = frozenset({"hit", "caster", "allies_in_radius", "enemies_in_radius"})
 _ALLOWED_DTYPE = frozenset({"physical", "magical", "pure"})
-_ALLOWED_FILTER = frozenset({"enemy", "ally", "all", "creeps"})
+_ALLOWED_FILTER = frozenset({"enemy", "ally", "all", "creeps", "buildings", "enemy_all"})
 _ALLOWED_STYPE = frozenset({"all", "magical", "physical"})
 _ALLOWED_BLINK_TO = frozenset({"point", "target", "behind_target"})
 _ALLOWED_PURGE = frozenset({"basic", "strong"})
@@ -153,13 +156,15 @@ HEROES: dict[str, dict] = {
                 "name": "Духота в серверной",
                 "hotkey": "W",
                 "desc": "Включает всё разом: +45 °C и запах горячей пыли. "
-                        "Жарит всех вокруг, включая самого Сисадмина, и замедляет врагов.",
+                        "Каждую секунду жарит всех вокруг, включая самого Сисадмина, "
+                        "и замедляет врагов. Пока включено — капает мана.",
                 "targeting": "toggle",
+                "toggle_interval": 1.0,
                 "cast_range": 0,
                 "cast_point": 0.0,
                 "cast_backswing": 0.0,
                 "cooldown": [0, 0, 0, 0],
-                "mana_cost": [0, 0, 0, 0],
+                "mana_cost": [6, 9, 12, 15],
                 "max_level": 4,
                 "level_req": [1, 3, 5, 7],
                 "pierces_magic_immunity": False,
@@ -168,16 +173,14 @@ HEROES: dict[str, dict] = {
                 "effects": [
                     {"op": "area", "radius": 255, "filter": "enemy", "max_targets": 0,
                      "effects": [
-                         {"op": "dot", "dtype": "magical",
-                          "dps": [40, 70, 100, 130], "duration": 1.0, "interval": 0.5,
-                          "target": "hit"},
+                         {"op": "damage", "dtype": "magical",
+                          "amount": [40, 70, 100, 130], "target": "hit"},
                          {"op": "slow",
                           "move_pct": [-14, -20, -26, -32],
-                          "attack_speed": [0, 0, 0, 0], "duration": 1.0, "target": "hit"},
+                          "attack_speed": [0, 0, 0, 0], "duration": 1.1, "target": "hit"},
                      ]},
-                    {"op": "dot", "dtype": "pure",
-                     "dps": [20, 35, 50, 65], "duration": 1.0, "interval": 0.5,
-                     "target": "caster"},
+                    {"op": "damage", "dtype": "pure",
+                     "amount": [20, 35, 50, 65], "target": "caster"},
                 ],
             },
             {   # прототип: Axe — Berserker's Call (осознанная замена Flesh Heap)
@@ -399,13 +402,13 @@ HEROES: dict[str, dict] = {
         "roles": ["mid", "support"],
         "lore": "Не спорит. Открывает дашборд — и спорить становится не с чем.",
         "abilities": [
-            {   # прототип: Zeus — Arc Lightning (веер заменён пробивающей линией)
+            {   # прототип: Zeus — Arc Lightning
                 "key": "analyst_metrics_roast",
                 "name": "Разнос по метрикам",
                 "hotkey": "Q",
-                "desc": "Дешёвый и быстрый разряд цифр. Прошивает всех на линии "
-                        "от Аналитика до точки.",
-                "targeting": "point",
+                "desc": "Дешёвый и быстрый разряд цифр. Перескакивает с одного "
+                        "виноватого на следующего, слабея с каждым прыжком.",
+                "targeting": "unit_enemy",
                 "cast_range": 800,
                 "cast_point": 0.15,
                 "cast_backswing": 0.4,
@@ -417,10 +420,10 @@ HEROES: dict[str, dict] = {
                 "dispellable": True,
                 "aoe_radius": 0,
                 "effects": [
-                    {"op": "projectile", "speed": 1800, "radius": 100, "pierce": True,
-                     "max_dist": 800, "on_hit": [
+                    {"op": "chain", "jumps": [4, 5, 6, 7], "radius": 500, "decay": 0.85,
+                     "delay": 0.2, "filter": "enemy", "effects": [
                          {"op": "damage", "dtype": "magical",
-                          "amount": [70, 95, 120, 145], "target": "hit"},
+                          "amount": [65, 90, 115, 140], "target": "hit"},
                      ]},
                 ],
             },
@@ -429,7 +432,7 @@ HEROES: dict[str, dict] = {
                 "name": "Дашборд",
                 "hotkey": "W",
                 "desc": "Выкатывает цифру, от которой цель на мгновение столбенеет. "
-                        "Больно и без предупреждения.",
+                        "Заодно подсвечивает всех, кто прятался в этом квадрате.",
                 "targeting": "unit_enemy",
                 "cast_range": 750,
                 "cast_point": 0.3,
@@ -443,10 +446,9 @@ HEROES: dict[str, dict] = {
                 "aoe_radius": 0,
                 "effects": [
                     {"op": "damage", "dtype": "magical",
-                     "amount": [140, 215, 290, 365], "target": "hit"},
+                     "amount": [120, 185, 250, 315], "target": "hit"},
                     {"op": "stun", "duration": 0.4, "target": "hit"},
-                    {"op": "stat_buff", "stats": {"vision_day": 600, "vision_night": 600},
-                     "duration": 4.0, "target": "caster"},
+                    {"op": "true_sight", "duration": 5.0, "radius": 700, "target": "hit"},
                 ],
             },
             {   # прототип: Zeus — Heavenly Jump
@@ -489,7 +491,7 @@ HEROES: dict[str, dict] = {
                 "cast_range": 0,
                 "cast_point": 0.4,
                 "cast_backswing": 0.6,
-                "cooldown": [63, 56, 49],
+                "cooldown": [68, 60, 52],
                 "mana_cost": [200, 300, 400],
                 "max_level": 3,
                 "level_req": [6, 12, 18],
@@ -499,7 +501,9 @@ HEROES: dict[str, dict] = {
                 "effects": [
                     {"op": "global", "filter": "enemy", "effects": [
                         {"op": "damage", "dtype": "magical",
-                         "amount": [260, 395, 530], "target": "hit"},
+                         "amount": [190, 290, 390], "target": "hit"},
+                        {"op": "true_sight", "duration": 5.0, "radius": 600,
+                         "target": "hit"},
                     ]},
                 ],
             },
@@ -584,8 +588,9 @@ HEROES: dict[str, dict] = {
                 "key": "hr_burnout",
                 "name": "Выгорание",
                 "hotkey": "E",
-                "desc": "Тянет из цели последние силы. Канал: чистый урон "
-                        "каждые полсекунды, цель еле переставляет ноги.",
+                "desc": "Тянет из цели последние силы: выжигает ману — тем больше, "
+                        "чем умнее жертва, — превращает её в урон и переливает себе. "
+                        "Цель при этом еле переставляет ноги.",
                 "targeting": "channel",
                 "cast_range": 600,
                 "cast_point": 0.1,
@@ -600,8 +605,10 @@ HEROES: dict[str, dict] = {
                 "effects": [
                     {"op": "channel", "duration": 5.0, "interval": 0.5,
                      "break_on_move": True, "on_tick": [
-                         {"op": "damage", "dtype": "pure",
-                          "amount": [13, 20, 27, 34], "target": "hit"},
+                         {"op": "mana_burn", "per_int": [0.25, 0.4, 0.55, 0.7],
+                          "damage_per_mana": 0.8, "target": "hit"},
+                         {"op": "restore_mana", "amount": [10, 15, 20, 25], "pct": 0,
+                          "target": "caster"},
                          {"op": "slow",
                           "move_pct": [-20, -20, -20, -20],
                           "attack_speed": [0, 0, 0, 0], "duration": 0.7, "target": "hit"},
@@ -614,7 +621,7 @@ HEROES: dict[str, dict] = {
                 "hotkey": "R",
                 "desc": "Подписывает приказ. Огромный магический урон, "
                         "а того, кто и так еле держался, увольняют сразу. "
-                        "За каждое удачное увольнение Эйчар набирает вес в компании.",
+                        "Выходное пособие оседает в бюджете отдела.",
                 "targeting": "unit_enemy",
                 "cast_range": 700,
                 "cast_point": 0.3,
@@ -629,9 +636,8 @@ HEROES: dict[str, dict] = {
                 "effects": [
                     {"op": "damage", "dtype": "magical",
                      "amount": [690, 835, 980], "target": "hit"},
-                    {"op": "execute", "hp_threshold": [250, 325, 400], "on_kill": [
-                        {"op": "stat_buff", "stats": {"spell_amp": [3, 3, 3]},
-                         "duration": 3600.0, "target": "caster"},
+                    {"op": "execute", "hp_threshold": [125, 165, 200], "on_kill": [
+                        {"op": "grant_gold", "amount": [150, 225, 300], "target": "caster"},
                     ]},
                 ],
             },
@@ -665,12 +671,12 @@ HEROES: dict[str, dict] = {
         "roles": ["support", "hard_support"],
         "lore": "Не даёт спринту умереть. Иногда — буквально.",
         "abilities": [
-            {   # прототип: Dazzle — Shadow Wave (цепочка заменена веером по союзникам)
+            {   # прототип: Dazzle — Shadow Wave
                 "key": "sm_retro",
                 "name": "Ретроспектива",
                 "hotkey": "Q",
-                "desc": "Проговаривает, что пошло не так. Союзники вокруг лечатся, "
-                        "а врагам рядом с каждым из них прилетает столько же урона.",
+                "desc": "Проговаривает, что пошло не так. Волна скачет по союзникам "
+                        "и лечит каждого, а врагам рядом с ними прилетает столько же урона.",
                 "targeting": "unit_ally",
                 "cast_range": 600,
                 "cast_point": 0.2,
@@ -683,8 +689,8 @@ HEROES: dict[str, dict] = {
                 "dispellable": False,
                 "aoe_radius": 600,
                 "effects": [
-                    {"op": "area", "radius": 600, "filter": "ally",
-                     "max_targets": [3, 4, 5, 6], "effects": [
+                    {"op": "chain", "jumps": [3, 4, 5, 6], "radius": 500, "decay": 1.0,
+                     "delay": 0.15, "filter": "ally", "effects": [
                          {"op": "heal", "amount": [100, 155, 210, 265], "target": "hit"},
                          {"op": "area", "radius": 225, "filter": "enemy", "max_targets": 0,
                           "effects": [
@@ -833,7 +839,8 @@ HEROES: dict[str, dict] = {
                 "name": "Внезапный аудит",
                 "hotkey": "W",
                 "desc": "Следующий удар — это проверка без предупреждения: "
-                        "дополнительный урон и цель надолго теряет темп.",
+                        "дополнительный урон, цель надолго теряет темп, "
+                        "а часть её бюджета уходит «на нужды отдела».",
                 "targeting": "passive",
                 "cast_range": 0,
                 "cast_point": 0.0,
@@ -853,6 +860,8 @@ HEROES: dict[str, dict] = {
                          "move_pct": [-25, -35, -45, -55],
                          "attack_speed": [-25, -35, -45, -55],
                          "duration": 2.5, "target": "hit"},
+                        {"op": "grant_gold", "amount": [10, 18, 26, 34],
+                         "target": "caster"},
                     ]},
                 ],
             },
@@ -889,8 +898,9 @@ HEROES: dict[str, dict] = {
                 "name": "Испытательный срок",
                 "hotkey": "R",
                 "desc": "Ставит цель на карандаш: она получает больше урона "
-                        "от всех источников, а вся команда Безопасника разгоняется, "
-                        "пока срок не вышел.",
+                        "от всех источников и больше нигде не спрячется, "
+                        "команда Безопасника разгоняется, а за закрытый срок "
+                        "выплачивают премию.",
                 "targeting": "unit_enemy",
                 "cast_range": 1000,
                 "cast_point": 0.1,
@@ -906,12 +916,18 @@ HEROES: dict[str, dict] = {
                     {"op": "stat_buff",
                      "stats": {"damage_taken_pct": [12, 16, 20]},
                      "duration": [30, 30, 30], "target": "hit"},
+                    {"op": "true_sight", "duration": [30, 30, 30], "radius": 900,
+                     "target": "hit"},
                     {"op": "area", "radius": 1200, "filter": "ally", "max_targets": 0,
                      "effects": [
                          {"op": "stat_buff",
                           "stats": {"move_speed_pct": [12, 16, 20]},
                           "duration": [30, 30, 30], "target": "hit"},
                      ]},
+                    {"op": "on_kill", "effects": [
+                        {"op": "grant_gold", "amount": [200, 300, 400],
+                         "target": "caster"},
+                    ]},
                 ],
             },
         ],
@@ -979,7 +995,8 @@ HEROES: dict[str, dict] = {
                 "hotkey": "W",
                 "desc": "Восемь секунд вокруг Бухгалтера хлопают штрафы. "
                         "Бьют по одному случайному врагу рядом — чем меньше "
-                        "целей, тем больнее каждой. Сносит линию сама собой.",
+                        "целей, тем больнее каждой. Достаётся и кулеру с принтером: "
+                        "линия сносится сама собой.",
                 "targeting": "none",
                 "cast_range": 0,
                 "cast_point": 0.3,
@@ -999,16 +1016,21 @@ HEROES: dict[str, dict] = {
                               {"op": "damage", "dtype": "magical",
                                "amount": [22, 32, 42, 52], "target": "hit"},
                           ]},
+                         {"op": "area", "radius": 500, "filter": "buildings",
+                          "max_targets": 1, "effects": [
+                              {"op": "damage", "dtype": "magical",
+                               "amount": [11, 16, 21, 26], "target": "hit"},
+                          ]},
                      ]},
                 ],
             },
-            {   # прототип: Leshrac — Lightning Storm (цепочка заменена пробивающей линией)
+            {   # прототип: Leshrac — Lightning Storm
                 "key": "acc_payment_cascade",
                 "name": "Каскад платежей",
                 "hotkey": "E",
-                "desc": "Один платёж тянет за собой следующий. Прошивает всех "
-                        "на линии и на секунду вбивает их в пол.",
-                "targeting": "point",
+                "desc": "Один платёж тянет за собой следующий, тот — ещё один. "
+                        "Каждого задетого на секунду вбивает в пол.",
+                "targeting": "unit_enemy",
                 "cast_range": 800,
                 "cast_point": 0.3,
                 "cast_backswing": 0.4,
@@ -1020,8 +1042,8 @@ HEROES: dict[str, dict] = {
                 "dispellable": True,
                 "aoe_radius": 0,
                 "effects": [
-                    {"op": "projectile", "speed": 1800, "radius": 100, "pierce": True,
-                     "max_dist": 800, "on_hit": [
+                    {"op": "chain", "jumps": [4, 5, 6, 7], "radius": 500, "decay": 0.9,
+                     "delay": 0.25, "filter": "enemy", "effects": [
                          {"op": "damage", "dtype": "magical",
                           "amount": [85, 130, 175, 220], "target": "hit"},
                          {"op": "slow",
@@ -1036,13 +1058,14 @@ HEROES: dict[str, dict] = {
                 "name": "Начисление пени",
                 "hotkey": "R",
                 "desc": "Пеня капает каждую секунду на всех, кто рядом. "
-                        "Пока включено — жрёт ману. Пока включено — враги не стоят рядом.",
+                        "Пока включено — жрёт ману. Пока включено — рядом не стоят.",
                 "targeting": "toggle",
+                "toggle_interval": 1.0,
                 "cast_range": 0,
                 "cast_point": 0.0,
                 "cast_backswing": 0.0,
                 "cooldown": [0, 0, 0],
-                "mana_cost": [30, 40, 50],
+                "mana_cost": [20, 28, 36],
                 "max_level": 3,
                 "level_req": [6, 12, 18],
                 "pierces_magic_immunity": False,
@@ -1052,7 +1075,7 @@ HEROES: dict[str, dict] = {
                     {"op": "area", "radius": 500, "filter": "enemy", "max_targets": 0,
                      "effects": [
                          {"op": "damage", "dtype": "magical",
-                          "amount": [100, 150, 200], "target": "hit"},
+                          "amount": [75, 110, 145], "target": "hit"},
                      ]},
                 ],
             },
@@ -1196,73 +1219,61 @@ HEROES: dict[str, dict] = {
 
 
 # =========================================================================
-# Чего не хватило в ABILITY_SPEC.md §3, чтобы собрать задуманное честно.
-# Всё ниже сейчас обойдено имеющимися примитивами (в скобках — как именно),
-# но обход стоит либо ощущений, либо баланса.
+# Чего ещё не хватает в ABILITY_SPEC.md §3.
+# Закрытые движком запросы из первого прохода (chain, тик у toggle, filter
+# 'buildings', лимит иллюзий, true_sight, mana_burn/restore_mana, grant_gold)
+# отсюда убраны — ростер уже переписан под них. Ниже только то, что осталось,
+# и один новый пункт, вылезший при переходе на новые примитивы.
 # =========================================================================
 
 ENGINE_REQUESTS: list[str] = [
-    "chain / bounce — прыжки эффекта по целям с затуханием (Zeus Arc Lightning, "
-    "Leshrac Lightning Storm, Dazzle Shadow Wave). Сейчас: projectile с pierce=true "
-    "(прямая линия) и area. Теряется главное ощущение — «молния сама нашла всех».",
+    "привязка дебаффа к каналу — самый болезненный из оставшихся. "
+    "«Внеплановая перезагрузка» (Dismember): стан на цели обязан сниматься в тот же "
+    "тик, когда канал прерван. Сейчас stun и channel — две независимые операции, "
+    "и при прерывании канала цель останется стоять в стане полные 3 секунды. "
+    "Прошу либо {'op':'stun', 'bound_to_channel': true}, либо правило «дебаффы, "
+    "выданные в одном каст-событии с channel, снимаются при его прерывании».",
 
-    "периодическое применение эффектов у toggle — «Духота в серверной» (Rot) и "
-    "«Начисление пени» (Pulse Nova) должны тикать, пока тоггл включён. В §3 у toggle "
-    "нет тика: effects применяются один раз. Нужен либо op 'toggle_pulse' с interval, "
-    "либо правило «effects тоггла применяются каждые interval секунд».",
+    "условный proc — нужен флаг вроде {'once': true} или 'requires_state': "
+    "'invisible' у proc_attack. «Удалённый доступ» (Shadow Walk) должен бить "
+    "бонусом только первым ударом из невидимости, «Внезапный аудит» (Jinada) — "
+    "только когда пассивка откатилась. Сейчас оба записаны как proc_attack с "
+    "chance=100, то есть срабатывают на каждой атаке; поле cooldown у пассивки "
+    "движок должен трактовать как кулдаун прока, иначе Безопасник крадёт бюджет "
+    "и вешает -55% скорости каждым ударом.",
 
-    "mana_burn / mana_restore — «Выгорание» (Lion Mana Drain) должно сжигать ману цели "
-    "и отдавать её кастеру. Сейчас заменено на pure-урон, из-за чего способность "
-    "перестала быть анти-кастерской и стала просто вторым нюком.",
-
-    "true_sight — «Дашборд» (Zeus Lightning Bolt) и «Испытательный срок» (BH Track) "
-    "обязаны раскрывать невидимок. В §3 нет op для истинного зрения, хотя в движке "
-    "флаг F_TRUESIGHT уже есть. Сейчас у Дашборда только stat_buff на обзор.",
-
-    "gold_steal / bonus_bounty — «Внезапный аудит» (Jinada) крадёт бюджет при ударе, "
-    "«Испытательный срок» (Track) даёт команде бюджет за убийство помеченного. "
-    "Экономических op в §3 нет вообще, поэтому обе механики просто выброшены.",
+    "триггер on_death у метки — новый пункт, вылез вместе с grant_gold. "
+    "«Испытательный срок» (Track) в доте платит премию всей команде, когда "
+    "помеченный умирает от чьей угодно руки. Есть только on_kill, который "
+    "срабатывает на убийстве кастером, так что сейчас Безопасник получает премию "
+    "только за свои килы, а команда — никогда. Нужен {'op':'on_death', "
+    "'target':'hit', 'effects':[...]} с выплатой всей команде.",
 
     "multi_strike / omnislash — «Залил в прод в пятницу» должен телепортировать "
     "кастера между случайными целями в радиусе, пока он неуязвим. Собрано из "
-    "blink + invulnerable + channel с вложенным blink внутри area, что опирается на "
-    "недокументированное поведение: blink к 'target' изнутри area.",
+    "blink + invulnerable + channel с вложенным blink внутри area, то есть "
+    "опирается на недокументированное поведение: blink к 'target' изнутри area. "
+    "Подтвердите, что так можно, или дайте отдельный op.",
 
-    "условный proc — нужен флаг вроде {'once': true} или 'requires_state' у "
-    "proc_attack. «Удалённый доступ» должен бить бонусом только первым ударом из "
-    "невидимости, «Внезапный аудит» — только когда способность откатилась. Сейчас "
-    "оба записаны как proc_attack с chance=100, то есть работают на каждой атаке; "
-    "поле cooldown у пассивки движок должен трактовать как кулдаун прока.",
+    "урон в процентах от HP — {'op':'damage','pct_of':'max_hp'|'current_hp'}. "
+    "Нужен, чтобы нюкеры не выключались к 15-й минуте, когда у всех по 2500 HP. "
+    "Особенно после того, как я по вашей просьбе срезал Аналитика: сейчас его "
+    "поздняя игра держится только на предметах.",
 
-    "привязка дебаффа к каналу — «Внеплановая перезагрузка» (Dismember): стан на цели "
-    "обязан сниматься в тот же тик, когда канал прерван. Сейчас stun и channel — две "
-    "независимые операции, и при прерывании канала цель останется в стане.",
+    "cast_range по уровням — §1 задаёт cast_range скаляром. У «Рывка к задаче» "
+    "(Phantom Rush) дальность рывка обязана расти с уровнем; пришлось "
+    "зафиксировать 700 на всех.",
 
-    "постоянный накопительный бафф — бонус «Увольнения» (Finger of Death) за убийство "
-    "должен копиться до конца матча. Обошёл через stat_buff с duration=3600, "
-    "что технически работает, но выглядит как костыль и не стакается предсказуемо.",
+    "каталог юнитов для summon — «Парное программирование» задумывалось как "
+    "Healing Ward: юнит, который стоит, лечит и которого можно убить. Op summon "
+    "есть, но нет описания, где живут статы юнита 'healing_ward'. Сейчас это "
+    "разовый area-хил + hp_regen_pct, то есть убиваемой варды у Сеньора нет.",
 
-    "filter='buildings' (или 'enemy_buildings') — «Штрафные санкции» (Diabolic Edict) "
-    "в доте наносят урон строениям, и именно поэтому Leshrac — пушер. В §3 фильтры "
-    "только enemy|ally|all|creeps, и попадают ли под 'enemy' башни — не определено. "
-    "Это дыра именно для архетипа пушера, её надо закрыть явно.",
-
-    "лимит иллюзий — у illusion нет поля max_alive. «Наплодил задач» (Juxtapose) без "
-    "потолка либо бесполезен, либо кладёт симуляцию: 30% прока на каждой атаке всех "
-    "иллюзий даёт экспоненту. Нужен max_alive (предлагаю 8/10/12) и правило "
-    "вытеснения самой старой.",
-
-    "урон в процентах от HP — {'op':'damage','pct_of':'max_hp'|'current_hp'}. Нужен "
-    "для Static Field-подобных пассивок и вообще чтобы нюкеры не выключались к "
-    "15-й минуте, когда у всех уже по 2500 HP.",
-
-    "summon с каталогом юнитов — «Парное программирование» задумывалось как Healing "
-    "Ward (юнит, который ходит и лечит). Op summon есть, но нет описания, где живут "
-    "статы юнита 'healing_ward'. Сейчас заменено на разовый area-хил + hp_regen_pct, "
-    "то есть варда, которую можно убить, у Сеньора нет.",
-
-    "cast_range по уровням — §1 задаёт cast_range скаляром. Для «Рывка к задаче» "
-    "(Phantom Rush) дальность рывка растёт с уровнем; пришлось зафиксировать 700.",
+    "уточнить сигнатуры, которые я угадал: grant_gold/grant_xp я записал как "
+    "{'op':'grant_gold','amount':[...],'target':'caster'} — если поля другие, "
+    "скажите, поправлю. И применяется ли decay у chain к heal: у «Ретроспективы» "
+    "я поставил decay 1.0, чтобы вопрос не возникал, но если хил тоже затухает, "
+    "Shadow Wave надо перебалансировать.",
 ]
 
 
@@ -1474,6 +1485,21 @@ def validate() -> bool:
             for field in ("pierces_magic_immunity", "dispellable"):
                 assert isinstance(ability[field], bool), (
                     f"{a}.{field}: ожидался bool, получено {ability[field]!r}")
+
+            if ability["targeting"] == "toggle":
+                assert "toggle_interval" in ability, (
+                    f"{a}: у toggle-способности обязано быть поле 'toggle_interval' — "
+                    f"как часто применяются её эффекты")
+                interval = ability["toggle_interval"]
+                assert _is_num(interval) and interval > 0, (
+                    f"{a}.toggle_interval: ожидалось положительное число, "
+                    f"получено {interval!r}")
+                assert any(cost > 0 for cost in ability["mana_cost"]), (
+                    f"{a}: toggle без расхода маны за тик выключить нечем — "
+                    f"он бесплатен навсегда; задай mana_cost > 0")
+            else:
+                assert "toggle_interval" not in ability, (
+                    f"{a}: 'toggle_interval' имеет смысл только при targeting='toggle'")
 
             assert ability["effects"], f"{a}: пустой список effects"
             _check_effects(ability["effects"], max_level, f"{a}.effects")

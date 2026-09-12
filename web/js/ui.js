@@ -278,9 +278,50 @@ function renderAbilities(me) {
   });
 }
 
+// Иконку выводим из того, что способность реально делает: у клиента есть
+// полные определения героев, так что гадать по номеру слота незачем.
+const OP_GLYPH = [
+  ['taunt', '📣'], ['pull', '🪝'], ['push', '💨'], ['cyclone', '🌪'],
+  ['hex', '🐣'], ['stun', '💫'], ['silence', '🤐'], ['root', '⛓'],
+  ['execute', '🪓'], ['heal', '💚'], ['shield', '🛡'], ['cheat_death', '⏳'],
+  ['invisible', '👻'], ['magic_immune', '🏖'], ['invulnerable', '✨'],
+  ['blink', '🌀'], ['leap', '🦘'], ['illusion', '👥'], ['summon', '🐾'],
+  ['chain', '🔗'], ['global', '🌍'], ['channel', '⏱'], ['slow', '🐌'],
+  ['mana_burn', '🔥'], ['true_sight', '👁'], ['dot', '☠'],
+  ['crit', '🎯'], ['evasion', '🍃'], ['lifesteal', '🩸'], ['cleave', '🌊'],
+  ['damage', '💥'], ['stat_buff', '⬆'], ['aura', '🔆'],
+];
+
+function collectOps(effects, acc) {
+  for (const e of effects || []) {
+    acc.add(e.op);
+    for (const k of ['on_hit', 'effects', 'on_tick', 'on_kill', 'on_finish']) {
+      if (Array.isArray(e[k])) collectOps(e[k], acc);
+    }
+  }
+  return acc;
+}
+
 function glyphForAbility(a, i) {
-  const g = ['✴', '🌀', '⚡', '💥'];
-  return a.tgt === 'passive' ? '🔒' : g[i % 4];
+  if (a.tgt === 'passive') {
+    const def = findAbilityDef(a.k);
+    const ops = def ? collectOps(def.effects, new Set()) : new Set();
+    for (const [op, g] of OP_GLYPH) if (ops.has(op)) return g;
+    return '🔒';
+  }
+  const def = findAbilityDef(a.k);
+  if (def) {
+    const ops = collectOps(def.effects, new Set());
+    for (const [op, g] of OP_GLYPH) if (ops.has(op)) return g;
+  }
+  return a.ult ? '🔱' : '✴';
+}
+
+function findAbilityDef(key) {
+  for (const h of Object.values(G.heroDefs)) {
+    for (const a of h.abilities || []) if (a.key === key) return a;
+  }
+  return null;
 }
 
 function renderItems(me) {
@@ -520,6 +561,25 @@ export function toast(text) {
   const d = el('div', 'tst', text);
   box.appendChild(d);
   setTimeout(() => d.remove(), 2600);
+}
+
+export function renderLateJoin() {
+  const box = $('latejoin');
+  const needs = G.state.phase !== 'lobby' && G.state.phase !== 'finished'
+    && G.you && !G.you.hero;
+  box.classList.toggle('hidden', !needs);
+  if (!needs || box.dataset.built) return;
+  box.dataset.built = '1';
+  const grid = $('late-grid');
+  grid.innerHTML = '';
+  for (const [key, h] of Object.entries(G.heroDefs)) {
+    const card = el('div', 'hero-card');
+    card.appendChild(el('div', 'glyph', HERO_GLYPH[key] || '\u25cf'));
+    card.appendChild(el('div', 'hname', h.name));
+    card.appendChild(el('div', 'proto', 'как ' + h.prototype));
+    card.onclick = () => { send({ t: 'pick_hero', hero: key }); box.classList.add('hidden'); };
+    grid.appendChild(card);
+  }
 }
 
 export function renderEnd() {

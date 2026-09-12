@@ -125,6 +125,7 @@ def hero_detail(h, world) -> dict:
         "armor": round(h.armor, 1),
         "mres": round(h.magic_resist * 100),
         "ms": round(h.move_speed),
+        "arange": round(h.attack_range),
         "as": round(h.attack_speed),
         "abil": [a.to_wire() for a in h.abilities],
         "items": [it.to_wire() if it else None for it in h.items],
