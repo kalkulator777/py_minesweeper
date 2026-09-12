@@ -300,3 +300,7 @@ code{font-family:ui-monospace,'Cascadia Code',monospace}
   background:#050709d8;backdrop-filter:blur(3px)}
 #latejoin .pause-card{max-width:760px}
 #late-grid{margin-top:12px;max-height:56vh;overflow:auto}
+
+.saves-block{background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--radius);padding:14px}
+.saves-block h3{margin:0 0 8px;font-size:15px}

@@ -24,6 +24,7 @@ export const G = {
   serverTime: 0,
   latency: 0,
   onState: null, onWelcome: null, onChat: null, onScore: null, onError: null,
+  onSaves: null,
 };
 
 export function playerId() {
@@ -109,6 +110,14 @@ function handle(m) {
       G.chat.push(m.m);
       if (G.chat.length > 80) G.chat.shift();
       G.onChat && G.onChat(m.m);
+      break;
+
+    case 'saves':
+      G.onSaves && G.onSaves(m.list);
+      break;
+
+    case 'saved':
+      G.onError && G.onError(`Матч сохранён как «${m.name}»`, false);
       break;
 
     case 'pong':

@@ -6,7 +6,7 @@ import { initInput, tickCamera, castPreview, ui } from './input.js';
 import {
   showScreen, initMenu, initLobby, renderLobby, initHud, renderHud,
   renderTop, renderScore, renderPause, renderKillfeed, renderEnd, renderLateJoin,
-  pushChat, toggleShop, toggleScore, toast,
+  pushChat, toggleShop, toggleScore, toast, renderSaves,
 } from './ui.js';
 
 // Доступ к состоянию из консоли и автотестов
@@ -46,6 +46,7 @@ G.onState = (st) => {
 };
 
 G.onChat = (m) => pushChat(m);
+G.onSaves = (list) => renderSaves(list);
 G.onScore = () => { if (ui.scoreboard) renderScore(); };
 G.onError = (msg, quiet) => { if (!quiet || true) toast(msg); };
 

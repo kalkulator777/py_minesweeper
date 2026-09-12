@@ -70,6 +70,8 @@ class Room:
 
         self.chat: list[dict] = []
         self._last_scoreboard = 0.0
+        self._last_autosave = 0.0
+        self.autosave_every = 60.0
 
     # ======================================================================
     #  Игроки
@@ -243,11 +245,27 @@ class Room:
 
         if self.world is not None:
             self.world.tick(TICK_DT)
+            self._maybe_autosave()
             if self.world.phase == PHASE_FINISHED:
                 self.phase = PHASE_FINISHED
                 w = self.world.winner
                 self.broadcast_system(f"Победа: {TEAM_NAMES.get(w, '?')}")
                 self.broadcast_state()
+
+    def _maybe_autosave(self) -> None:
+        """Периодический сейв: если сервер упадёт или машину перезагрузят,
+        матч не пропадёт. Дешевле, чем объяснять это людям постфактум."""
+        if self.autosave_every <= 0 or self.phase != PHASE_RUNNING:
+            return
+        now = time.monotonic()
+        if now - self._last_autosave < self.autosave_every:
+            return
+        self._last_autosave = now
+        try:
+            from .persistence import save_room
+            save_room(self, "autosave")
+        except Exception as exc:                              # noqa: BLE001
+            print(f"[room] автосохранение не удалось: {exc}", flush=True)
 
     # ======================================================================
     #  Рассылка
@@ -527,6 +545,36 @@ class Room:
             h.items = slots[:len(h.items)]
             h.backpack = slots[len(h.items):]
             h._stats_dirty = True
+
+    # --- сохранение матча --------------------------------------------------
+    def _cmd_save_match(self, p: Player, m: dict) -> None:
+        from .persistence import save_room
+        if self.world is None:
+            self.send(p, {"t": "err", "m": "матч ещё не начат"})
+            return
+        name = str(m.get("name", "")).strip() or "last"
+        try:
+            path = save_room(self, name)
+        except Exception as exc:                              # noqa: BLE001
+            self.send(p, {"t": "err", "m": f"не сохранилось: {exc}"})
+            return
+        self.broadcast_system(f"{p.name} сохранил матч как «{name}». "
+                              f"Можно доиграть позже.")
+        self.send(p, {"t": "saved", "name": name, "path": path})
+
+    def _cmd_load_match(self, p: Player, m: dict) -> None:
+        from .persistence import load_room
+        ok, err = load_room(self, str(m.get("name", "last")))
+        if not ok:
+            self.send(p, {"t": "err", "m": err})
+            return
+        self.broadcast_system("Матч восстановлен и стоит на паузе. "
+                              "Все заходят и снимаем.")
+        self.broadcast_state()
+
+    def _cmd_list_saves(self, p: Player, m: dict) -> None:
+        from .persistence import list_saves
+        self.send(p, {"t": "saves", "list": list_saves()})
 
     def _cmd_ping(self, p: Player, m: dict) -> None:
         self.send(p, {"t": "pong", "c": m.get("c")})

@@ -134,13 +134,19 @@ class World:
     def schedule(self, delay: float, fn) -> None:
         self._scheduled.append((self.time + max(0.0, delay), fn))
 
-    def emit(self, kind: str, **kw) -> None:
-        kw["t"] = kind
+    def emit(self, _event: str, **kw) -> None:
+        """Имя первого параметра с подчёркиванием намеренно: поля событий
+        приходят через **kw, и обычное имя вроде kind столкнулось бы с ними.
+
+        Ключ «t» зарезервирован под тип события — поле с таким именем
+        будет затёрто, поэтому такие имена в событиях запрещены."""
+        assert "t" not in kw, f"событие {_event}: поле «t» зарезервировано под тип"
+        kw["t"] = _event
         self.events.append(kw)
 
-    def emit_effect(self, kind: str, x: float, y: float, radius: float,
+    def emit_effect(self, fx_kind: str, x: float, y: float, radius: float,
                     key: str, team: int) -> None:
-        self.emit("fx", fx=kind, x=round(x), y=round(y), r=round(radius),
+        self.emit("fx", fx=fx_kind, x=round(x), y=round(y), r=round(radius),
                   k=key, team=team)
 
     def drain_events(self) -> list[dict]:
@@ -1334,7 +1340,7 @@ class World:
             self.deliver_item(h, key)
         else:
             h.deliveries.append({"key": key, "t": DELIVERY_TIME})
-            self.emit("delivery", id=h.id, k=key, t=DELIVERY_TIME)
+            self.emit("delivery", id=h.id, k=key, sec=DELIVERY_TIME)
 
     def deliver_item(self, h: Hero, key: str) -> None:
         from .items import Item, try_assemble

@@ -101,6 +101,34 @@ export function initLobby() {
     b.onclick = () => send({ t: 'add_bot', team: +b.dataset.addBot });
   }
   $('btn-start').onclick = () => send({ t: 'start' });
+  send({ t: 'list_saves' });
+}
+
+export function renderSaves(list) {
+  const ul = $('saves-list');
+  if (!ul) return;
+  ul.innerHTML = '';
+  if (!list || !list.length) {
+    const li = el('li');
+    li.className = 'lan-empty';
+    li.textContent = 'Нет незаконченных матчей. Сохранить текущий можно кнопкой в игре.';
+    ul.appendChild(li);
+    return;
+  }
+  for (const s of list) {
+    const li = el('li');
+    const left = el('div');
+    left.appendChild(el('div', 'who', s.room || s.name));
+    const m = Math.floor(s.time / 60), sec = s.time % 60;
+    const when = s.saved_at ? new Date(s.saved_at * 1000).toLocaleString('ru') : '';
+    left.appendChild(el('div', 'meta',
+      `${m}:${String(sec).padStart(2, '0')} игры · игроков ${s.players} · ${when}`));
+    li.appendChild(left);
+    const b = el('button', 'btn small', 'Продолжить');
+    b.onclick = () => send({ t: 'load_match', name: s.name });
+    li.appendChild(b);
+    ul.appendChild(li);
+  }
 }
 
 export function renderLobby() {
@@ -209,6 +237,11 @@ export function initHud() {
   $('btn-shop').onclick = () => toggleShop(!ui.shop);
   $('shop-close').onclick = () => toggleShop(false);
   $('btn-pause').onclick = () => send({ t: G.state.paused ? 'unpause' : 'pause' });
+  const bs = $('btn-save');
+  if (bs) bs.onclick = () => {
+    const name = prompt('Название сохранения:', 'обед');
+    if (name) send({ t: 'save_match', name });
+  };
   $('btn-unpause').onclick = () => send({ t: 'unpause' });
   $('shop-search').addEventListener('input', renderShop);
 }

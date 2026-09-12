@@ -448,6 +448,10 @@ ITEMS: dict[str, dict] = {
             "mana_cost": 0,
             "effects": [
                 {"op": "ghost", "duration": 4, "magic_amp": 40, "target": "caster"},
+                # Явный disarm — в доте эфирная форма запрещает атаковать. Если op ghost
+                # уже disarm'ит сам, строка просто дублирует эффект; если нет — без неё
+                # «Больничный» давал бы физический иммунитет и атаку одновременно.
+                {"op": "disarm", "duration": 4, "target": "caster"},
                 {"op": "stat_buff", "stats": {"move_speed": 30}, "duration": 4, "target": "caster"},
             ],
         },
