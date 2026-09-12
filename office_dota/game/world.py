@@ -99,6 +99,8 @@ class World:
         self._scheduled: list[tuple[float, object]] = []
         self.last_damage_by: dict[int, float] = {}
         self._toggle_acc: dict[tuple[int, int], float] = {}
+        self._channel_bound: dict[int, list[tuple[int, str]]] = {}
+        self._proc_ready: dict[tuple[int, str], float] = {}
 
         self.events: list[dict] = []
         self.next_wave_time = C.WAVES.get("first_wave_time", 30.0)
@@ -402,10 +404,13 @@ class World:
                 sources += ab.auras(it.defn.get("passives", []), 1)
             for au in sources:
                 team = h.team if au["filter"] == "ally" else enemy_of(h.team)
+                data = ({"unique": au["unique"], "unique_rank": au["unique_rank"]}
+                        if au.get("unique") else {})
                 for t in self.units_in_radius(h.x, h.y, au["radius"], team=team):
                     t.add_modifier(Modifier(
                         au["key"], 0.5, name=au["name"], stats=au["stats"],
-                        source_id=h.id, is_aura_effect=True, dispellable=False))
+                        source_id=h.id, is_aura_effect=True, dispellable=False,
+                        data=data))
 
     def _tick_forced_moves(self, dt: float) -> None:
         if not self.forced_moves:
@@ -458,6 +463,7 @@ class World:
             u = self.units.get(uid)
             if u is not None:
                 u.remove_modifier("_channeling")
+            self._release_channel_bound(uid)
 
     # --- ИИ крипов, башен и нейтралов --------------------------------------
     def _tick_ai(self, alive, dt: float) -> None:
@@ -771,10 +777,18 @@ class World:
             from .modifiers import stun
             target.add_modifier(stun(target.scaled_duration(u.bash_duration), u.id, "bash"))
 
-        for chance, effects in getattr(u, "attack_procs", ()):
-            if chance >= 1.0 or self.rng.random() < chance:
-                ab.execute(self, ab.EffectContext(u, target, target.x, target.y,
-                                                 1, "attack_proc"), effects)
+        for proc in getattr(u, "attack_procs", ()):
+            if proc["cooldown"] > 0:
+                gate = (u.id, proc["key"])
+                if self._proc_ready.get(gate, 0.0) > self.time:
+                    continue
+            if proc["chance"] < 1.0 and self.rng.random() >= proc["chance"]:
+                continue
+            if proc["cooldown"] > 0:
+                self._proc_ready[(u.id, proc["key"])] = self.time + proc["cooldown"]
+            ab.execute(self, ab.EffectContext(u, target, target.x, target.y,
+                                              proc["level"], "attack_proc"),
+                       proc["effects"])
 
     def _tick_projectiles(self, dt: float) -> None:
         if not self.projectiles:
@@ -854,6 +868,15 @@ class World:
     def start_forced_move(self, u: Unit, tx: float, ty: float, duration: float) -> None:
         tx, ty = vmath.clamp(tx, 40, gm.SIZE - 40), vmath.clamp(ty, 40, gm.SIZE - 40)
         self.forced_moves[u.id] = ForcedMove(u.x, u.y, tx, ty, duration)
+
+    def bind_to_channel(self, caster_id: int, target_id: int, key: str) -> None:
+        self._channel_bound.setdefault(caster_id, []).append((target_id, key))
+
+    def _release_channel_bound(self, caster_id: int) -> None:
+        for target_id, key in self._channel_bound.pop(caster_id, ()):
+            u = self.units.get(target_id)
+            if u is not None:
+                u.remove_modifier(key)
 
     def start_channel(self, u: Unit, ctx, duration: float, interval: float,
                       on_tick: list, break_on_move: bool, on_finish: list) -> None:
@@ -967,12 +990,33 @@ class World:
                 attacker.team != target.team:
             self._credit_assist(target, attacker)
         self.emit("dmg", id=target.id, v=round(amount), dt=dtype)
+        if attacker is not None and attacker.etype == E_HERO:
+            self._break_fragile_buffs(target)
         self.run_damage_reactions(target, attacker, amount, dtype)
 
     def record_heal(self, healer, target, amount: float, key: str) -> None:
         if isinstance(healer, Hero):
             healer.healing_done += amount
         self.emit("heal", id=target.id, v=round(amount))
+
+    def _break_fragile_buffs(self, u: Unit) -> None:
+        """Реген от бутылки и мази сбивается уроном героя, как в доте."""
+        fragile = [m.key for m in u.modifiers if m.data.get("break_on_damage")]
+        for key in fragile:
+            u.remove_modifier(key)
+
+    def _run_death_marks(self, victim: Unit, killer) -> None:
+        """Метки вроде Track платят команде, когда помеченный умирает
+        от чьей угодно руки, а не только от руки поставившего метку."""
+        for m in list(victim.modifiers):
+            effects = m.data.get("on_death_effects")
+            if not effects:
+                continue
+            src = self.units.get(m.source_id)
+            if src is None:
+                continue
+            ctx = ab.EffectContext(src, victim, victim.x, victim.y, 1, m.ability_key)
+            ab.execute(self, ctx, effects)
 
     def _credit_assist(self, victim: Hero, attacker) -> None:
         owner = attacker
@@ -1109,6 +1153,10 @@ class World:
         owner = killer
         if killer is not None and getattr(killer, "owner_id", 0):
             owner = self.units.get(killer.owner_id) or killer
+
+        # Метки читаются ДО обработки смерти: она снимает все модификаторы,
+        # и метка исчезла бы, не успев выплатить награду.
+        self._run_death_marks(u, owner)
 
         if u.etype == E_HERO:
             self._on_hero_death(u, owner)
@@ -1422,6 +1470,7 @@ class World:
         h.clear_order()
         h.face_towards(px if not target else target.x, py if not target else target.y, 1.0)
 
+        self._charge_nearby_wands(h)
         cp = a.cast_point
         fire = lambda: self._fire_ability(h, a, target_id, px, py)
         if cp > 0.0:
@@ -1431,6 +1480,19 @@ class World:
             self.emit("cast", id=h.id, k=a.key, x=round(px), y=round(py), cp=0)
             fire()
         return True, ""
+
+    def _charge_nearby_wands(self, caster: Hero) -> None:
+        """Предметы, копящие заряды от чужих применений."""
+        for e in self.units_in_radius(caster.x, caster.y, 1200.0,
+                                      team=enemy_of(caster.team)):
+            if e.etype != E_HERO:
+                continue
+            for it in e.all_items():
+                if not it.defn.get("gain_charge_on_enemy_cast"):
+                    continue
+                cap = int(it.defn.get("max_charges", 20))
+                if it.charges < cap:
+                    it.charges += 1
 
     def _fire_ability(self, h: Hero, a, target_id: int, px: float, py: float) -> None:
         from .consts import IS_DISABLED

@@ -143,6 +143,11 @@ class ModifierHost:
         if self._blocks_modifier(mod):
             return None
 
+        if mod.data.get("unique"):
+            keep = self._resolve_unique(mod)
+            if keep is not None:
+                return keep
+
         if mod.stacking != STACK_INDEPENDENT:
             existing = self.find_modifier(mod.key)
             if existing is not None:
@@ -163,6 +168,27 @@ class ModifierHost:
         self._stats_dirty = True
         self.on_modifier_changed()
         return mod
+
+    def _resolve_unique(self, mod: Modifier) -> Modifier | None:
+        """Из одной уникальной группы остаётся сильнейший.
+
+        Нужно там, где улучшенный предмет собирается из базового: обе ауры
+        висели бы одновременно и складывались, чего быть не должно.
+        Возвращает действующий модификатор, если новый не нужен.
+        """
+        group = mod.data["unique"]
+        rank = float(mod.data.get("unique_rank", 1))
+        drop: list[Modifier] = []
+        for m in self.modifiers:
+            if m.data.get("unique") != group or m.key == mod.key:
+                continue
+            if float(m.data.get("unique_rank", 1)) >= rank:
+                return m                      # уже висит не слабее — новый не нужен
+            drop.append(m)
+        if drop:
+            self.modifiers = [m for m in self.modifiers if m not in drop]
+            self._stats_dirty = True
+        return None
 
     def _blocks_modifier(self, mod: Modifier) -> bool:
         """Магический иммунитет отсекает контроль, если тот его не пробивает."""

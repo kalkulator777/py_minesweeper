@@ -199,12 +199,16 @@ def _control(flag_factory, duration_key="duration"):
     def handler(world, ctx, eff):
         duration = float(lv(eff.get(duration_key, 0), ctx.level))
         key = eff.get("key") or f"{ctx.ability_key}_{flag_factory.__name__}"
+        bound = bool(eff.get("bound_to_channel"))
         for t in _resolve_targets(world, ctx, eff):
             m = flag_factory(t.scaled_duration(duration), ctx.caster.id, key)
             m.pierces_magic_immunity = ctx.pierces_mi
             m.ability_key = ctx.ability_key
             m.source_team = ctx.caster.team
-            t.add_modifier(m)
+            if t.add_modifier(m) is not None and bound:
+                # Прервали канал — снимаем и контроль. Иначе цель стоит
+                # оглушённой, хотя способность уже не работает.
+                world.bind_to_channel(ctx.caster.id, t.id, key)
     return handler
 
 
@@ -298,6 +302,15 @@ def _op_stat_buff(world, ctx, eff):
     stats = {k: float(lv(v, ctx.level)) for k, v in eff.get("stats", {}).items()}
     key = eff.get("key") or f"{ctx.ability_key}_buff"
     is_debuff = any(v < 0 for v in stats.values())
+    data = {}
+    if eff.get("unique"):
+        data["unique"] = eff["unique"]
+        data["unique_rank"] = float(eff.get("unique_rank", 1))
+    if eff.get("break_on_damage"):
+        data["break_on_damage"] = True
+    if eff.get("on_death_effects"):
+        # Метка платит, когда помеченный умирает от чьей угодно руки
+        data["on_death_effects"] = eff["on_death_effects"]
     for t in _resolve_targets(world, ctx, eff):
         d = t.scaled_duration(duration) if is_debuff else duration
         m = mods.Modifier(key, d, name=eff.get("name", "Эффект"), stats=stats,
@@ -305,7 +318,7 @@ def _op_stat_buff(world, ctx, eff):
                           dispellable=eff.get("dispellable", True),
                           stacking=eff.get("stacking", mods.STACK_REFRESH),
                           max_stacks=eff.get("max_stacks", 1),
-                          visual=eff.get("visual", "buff"))
+                          visual=eff.get("visual", "buff"), data=data)
         t.add_modifier(m)
 
 
@@ -537,6 +550,11 @@ def _op_grant_gold(world, ctx, eff):
 
 def _op_grant_xp(world, ctx, eff):
     amount = float(lv(eff.get("amount", 0), ctx.level))
+    # Множитель от награды жертвы — так работает Midas: ценность растёт
+    # вместе с тем, кого съели, а не одинакова на стажёре и на боссе леса
+    mult = float(eff.get("from_target_bounty", 0))
+    if mult and ctx.hit is not None:
+        amount += float(getattr(ctx.hit, "bounty_xp", 0)) * mult
     for t in _resolve_targets(world, ctx, eff):
         if t.etype == "hero":
             world.grant_xp(t, amount, apply_mult=bool(eff.get("apply_mult", False)))
@@ -691,13 +709,25 @@ def contribute_passives(effects: list, level: int, out: dict) -> int:
     return flags
 
 
-def attack_procs(effects: list, level: int) -> list[tuple[float, list]]:
-    """Список (шанс, эффекты) для срабатываний при атаке."""
+def attack_procs(effects: list, level: int) -> list[dict]:
+    """Срабатывания при атаке.
+
+    Поле cooldown у пассивки — это кулдаун самого срабатывания. Без него
+    пассивка с chance 100 срабатывает каждым ударом: именно так ломалась
+    кража бюджета у Безопасника.
+    """
     out = []
-    for eff in effects:
-        if eff.get("op") == "proc_attack":
-            chance = float(lv(eff.get("chance", 100), level)) / 100.0
-            out.append((chance, eff.get("effects", [])))
+    for i, eff in enumerate(effects):
+        if eff.get("op") != "proc_attack":
+            continue
+        out.append({
+            "chance": float(lv(eff.get("chance", 100), level)) / 100.0,
+            "effects": eff.get("effects", []),
+            "cooldown": float(lv(eff.get("cooldown", 0), level)),
+            "key": eff.get("key") or f"proc{i}",
+            "level": level,
+            "once_per_target": bool(eff.get("once_per_target")),
+        })
     return out
 
 
@@ -715,6 +745,8 @@ def auras(effects: list, level: int) -> list[dict]:
                 "stats": {k: float(lv(v, level)) for k, v in eff.get("stats", {}).items()},
                 "key": eff.get("key", "aura"),
                 "name": eff.get("name", "Аура"),
+                "unique": eff.get("unique", ""),
+                "unique_rank": float(eff.get("unique_rank", 1)),
             })
     return out
 
