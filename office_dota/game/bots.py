@@ -23,6 +23,7 @@ RETREAT_HP = 0.32
 RESUME_HP = 0.72
 ENGAGE_RADIUS = 900.0
 LASTHIT_RADIUS = 420.0
+TRAVEL_RADIUS = 1600.0   # дальше этого до цели идём, а не воюем по дороге
 TOWER_FEAR_RADIUS = 780.0
 
 # Порядок покупок: дёшево и универсально. Ключи сверяются с магазином,
@@ -112,8 +113,11 @@ class BotDirector:
         enemy_hero = self._nearest_enemy_hero(h)
         if enemy_hero is not None and not self._under_enemy_tower(h, enemy_hero):
             self._use_abilities(h, enemy_hero)
-            w.issue_order(h, "attack_unit", enemy_hero.x, enemy_hero.y, enemy_hero.id)
-            return
+            # Дерёмся, только если враг действительно рядом. Иначе бот
+            # бросает пуш и уходит в погоню через полкарты.
+            if vmath.dist(h.x, h.y, enemy_hero.x, enemy_hero.y) < ENGAGE_RADIUS * 0.7:
+                w.issue_order(h, "attack_unit", enemy_hero.x, enemy_hero.y, enemy_hero.id)
+                return
 
         victim = self._lasthit_target(h)
         if victim is not None:
@@ -145,10 +149,14 @@ class BotDirector:
         return False
 
     def _lasthit_target(self, h):
-        """Добить того, кто вот-вот умрёт, иначе просто бить ближайшего."""
+        """Только настоящее добивание — тот, кто умрёт с одного удара.
+
+        Запасной «бить ближайшего» отсюда убран намеренно: с ним бот
+        вечно фармил свою линию и до пуша не доходил никогда. Бить всех
+        по пути и так заставляет приказ «атака по земле».
+        """
         w = self.world
         best, best_hp = None, 1e18
-        fallback = None
         for u in w.spatial.query(h.x, h.y, LASTHIT_RADIUS):
             if not u.alive or u.team == h.team:
                 continue
@@ -156,11 +164,9 @@ class BotDirector:
                 continue
             if h.dist_sq_to(u) > LASTHIT_RADIUS ** 2:
                 continue
-            if fallback is None:
-                fallback = u
-            if u.hp <= h.damage_max * 1.1 and u.hp < best_hp:
+            if u.hp <= h.damage_max * 1.15 and u.hp < best_hp:
                 best_hp, best = u.hp, u
-        return best or fallback
+        return best
 
     def team_focus(self, team: int) -> str:
         """Линия, на которую команда давит вместе.
@@ -240,7 +246,14 @@ class BotDirector:
             w.issue_order(h, "attack_move", p[0], p[1])
             return
 
-        # Строение бьём только если рядом есть свои крипы: в одиночку это
+        d = vmath.dist(h.x, h.y, target.x, target.y)
+        if d > TRAVEL_RADIUS:
+            # Далеко — идём обычным приказом. «Атака по земле» цепляется за
+            # каждого крипа в радиусе агро, а волны идут непрерывно, поэтому
+            # с ней бот не доходил до цели никогда.
+            w.issue_order(h, "move", target.x, target.y)
+            return
+        # Строение бьём, только если рядом есть свои крипы: в одиночку это
         # упирается в защиту от бэкдора и бесполезно
         if self._creeps_near(h.team, target.x, target.y):
             w.issue_order(h, "attack_unit", target.x, target.y, target.id)

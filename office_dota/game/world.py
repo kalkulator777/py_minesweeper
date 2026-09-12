@@ -230,12 +230,16 @@ class World:
                 t3 = [b.id for b in chain if b.tier == 3]
                 for r in rax:
                     r.invuln_until_alive = t3
+            # Турникеты открываются, как только пала ЛЮБАЯ Кофемашина (T3),
+            # а не когда снесены все бараки. Со старым правилом матч было
+            # почти невозможно закрыть: в прогонах на тридцать минут трон
+            # не падал ни разу даже при снесённых восьми бараках.
             t4 = [b for b in self.units.values()
                   if isinstance(b, Building) and b.team == team and b.tier == 4]
-            all_rax = [b.id for b in self.units.values()
-                       if isinstance(b, Building) and b.team == team and b.etype == E_BARRACKS]
+            all_t3 = [b.id for b in self.units.values()
+                      if isinstance(b, Building) and b.team == team and b.tier == 3]
             for b in t4:
-                b.invuln_until_alive = all_rax
+                b.invuln_until_alive = all_t3
             anc = self.units[self.teams[team].ancient_id]
             anc.invuln_until_alive = [b.id for b in t4]
 
@@ -794,8 +798,12 @@ class World:
             self._begin_attack(u, near)
 
     def _nearest_enemy(self, u: Unit, radius: float):
-        best, best_d = None, radius * radius
-        for e in self.spatial.query(u.x, u.y, radius):
+        """Ближайший враг в радиусе. Радиус самой цели учитывается:
+        без этого крупные строения (трон радиусом 130) не находились,
+        пока юнит буквально не встанет на них."""
+        best, best_d = None, 1e18
+        search = radius + 160.0
+        for e in self.spatial.query(u.x, u.y, search):
             if not e.alive or e.team == u.team or e.etype == E_FOUNTAIN:
                 continue
             if not e.can_be_attacked:
@@ -804,8 +812,9 @@ class World:
                 continue
             if isinstance(e, Building) and self.is_invulnerable_building(e):
                 continue
+            reach = radius + e.radius
             d = u.dist_sq_to(e)
-            if d < best_d:
+            if d <= reach * reach and d < best_d:
                 best_d, best = d, e
         return best
 

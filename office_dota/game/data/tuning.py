@@ -309,8 +309,8 @@ BUILDINGS: dict[str, dict] = {
     },
     "fountain": {
         "name": "Кухня",
-        "hp": 10000, "damage": 500, "armor": 100.0, "magic_resist": 0.0,
-        "attack_range": 1200, "bat": 0.2,
+        "hp": 10000, "damage": 200, "armor": 100.0, "magic_resist": 0.0,
+        "attack_range": 700, "bat": 0.4,
         "bounty_team_gold": 0, "bounty_killer_gold": 0,
         "backdoor_protection": True,
         "hp_regen": 10.0,
