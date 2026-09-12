@@ -248,6 +248,11 @@ class Unit(Entity, ModifierHost):
             self.hp = self.max_hp
         if self.mana > self.max_mana:
             self.mana = self.max_mana
+        self.refresh_triggers()
+
+    def refresh_triggers(self) -> None:
+        """Пересобирает срабатывания от предметов и пассивок. У простых юнитов пусто."""
+        pass
 
     def _attributes(self, st: dict[str, float]) -> tuple[float, float, float]:
         """Итоговые атрибуты. У обычных юнитов атрибутов нет."""
@@ -462,6 +467,33 @@ class Hero(Unit):
             if ab.level > 0:
                 flags |= ab.contribute_passive(out)
         return flags
+
+    def refresh_triggers(self) -> None:
+        from .abilities import attack_procs, triggered
+        procs: list = []
+        on_kill: list = []
+        on_dmg: list = []
+        for it in self.items:
+            if it is None:
+                continue
+            eff = it.defn.get("passives") or []
+            procs += attack_procs(eff, 1)
+            for e in triggered(eff, "on_kill"):
+                on_kill.append(e)
+            for e in triggered(eff, "on_take_damage"):
+                on_dmg.append((e, it.defn))
+        for ab in self.abilities:
+            if ab.level <= 0:
+                continue
+            eff = ab.defn.get("effects") or []
+            procs += attack_procs(eff, ab.level)
+            for e in triggered(eff, "on_kill"):
+                on_kill.append(e)
+            for e in triggered(eff, "on_take_damage"):
+                on_dmg.append((e, ab.defn))
+        self.attack_procs = procs
+        self.on_kill_procs = on_kill
+        self.on_damaged_procs = on_dmg
 
     def all_items(self):
         for it in self.items:

@@ -18,6 +18,10 @@ from .consts import (
 # Операции, допустимые в данных. Всё, чего тут нет, — ошибка в данных.
 VALID_OPS = frozenset({
     "damage", "heal", "dot", "execute", "lifesteal_burst",
+    # добавлены по итогам проектирования контента — см. ENGINE_REQUESTS
+    # в data/heroes.py и data/items.py
+    "chain", "restore_mana", "mana_burn", "grant_gold", "grant_xp",
+    "true_sight", "ghost", "cyclone", "toggle_pulse",
     "stun", "slow", "silence", "root", "disarm", "hex", "taunt", "purge",
     "shield", "invulnerable", "magic_immune", "invisible", "cheat_death", "stat_buff",
     "blink", "pull", "push", "leap",
@@ -30,8 +34,10 @@ VALID_OPS = frozenset({
 # Операции, которые работают только как пассивные (не исполняются при касте)
 PASSIVE_OPS = frozenset({
     "passive_stats", "proc_attack", "crit", "bash", "evasion",
-    "lifesteal", "cleave", "aura", "on_kill", "on_take_damage",
+    "lifesteal", "cleave", "aura", "on_kill",
 })
+# on_take_damage работает и пассивно (в passives предмета), и активно
+# (в active.effects, тогда действует указанное время) — см. «Ответить всем».
 
 
 def lv(value, level: int):
@@ -86,15 +92,29 @@ def _resolve_targets(world, ctx: EffectContext, eff: dict) -> list:
 def _filtered(world, ctx: EffectContext, x: float, y: float, radius: float,
               filt: str, max_targets: int = 0) -> list:
     team = ctx.caster.team
+    # «enemy» намеренно не включает строения: в доте площадные заклинания
+    # по башням не бьют. Для пушеров есть отдельные фильтры.
     if filt == "enemy":
-        units = world.units_in_radius(x, y, radius, team=enemy_of(team), include_neutrals=True)
+        units = [u for u in world.units_in_radius(x, y, radius, team=enemy_of(team),
+                                                  include_neutrals=True)
+                 if not u.is_building and u.can_be_attacked]
+    elif filt == "enemy_all":
+        units = [u for u in world.units_in_radius(x, y, radius, team=enemy_of(team),
+                                                  include_neutrals=True)
+                 if u.can_be_attacked]
+    elif filt == "buildings":
+        units = [u for u in world.units_in_radius(x, y, radius, team=enemy_of(team))
+                 if u.is_building and u.etype != "fountain"
+                 and not world.is_invulnerable_building(u)]
     elif filt == "ally":
-        units = world.units_in_radius(x, y, radius, team=team)
+        units = [u for u in world.units_in_radius(x, y, radius, team=team)
+                 if u.can_be_attacked]
     elif filt == "creeps":
         units = [u for u in world.units_in_radius(x, y, radius, team=None)
-                 if not u.is_building and u.etype != "hero"]
+                 if not u.is_building and u.etype != "hero" and u.can_be_attacked]
     else:
-        units = world.units_in_radius(x, y, radius, team=None)
+        units = [u for u in world.units_in_radius(x, y, radius, team=None)
+                 if u.can_be_attacked]
     if max_targets and len(units) > max_targets:
         units.sort(key=lambda u: vmath.dist_sq(x, y, u.x, u.y))
         units = units[:max_targets]
@@ -155,7 +175,10 @@ def _op_dot(world, ctx, eff):
 
 def _op_execute(world, ctx, eff):
     threshold = float(lv(eff.get("hp_threshold", 0), ctx.level))
+    allowed = eff.get("target_types")
     for t in _resolve_targets(world, ctx, eff):
+        if allowed and t.etype not in allowed:
+            continue
         if t.hp <= threshold and not (t.flags & F_CHEAT_DEATH):
             combat.apply_damage(world, t, t.hp + 1.0, DMG_PURE, ctx.caster,
                                 ctx.source, ctx.ability_key, True)
@@ -416,6 +439,173 @@ def _op_illusion(world, ctx, eff):
     world.spawn_illusions(ctx.caster, count, duration, out_pct, in_pct)
 
 
+
+def _op_chain(world, ctx, eff):
+    """Прыжки эффекта по целям — молния Зевса, волна Dazzle.
+
+    Каждый прыжок бьёт слабее предыдущего на (1 - decay) и не возвращается
+    к уже задетым. Прыжки разнесены во времени, чтобы это читалось глазом.
+    """
+    jumps = int(lv(eff.get("jumps", 3), ctx.level))
+    radius = float(lv(eff.get("radius", 500), ctx.level))
+    decay = float(eff.get("decay", 1.0))
+    delay = float(eff.get("delay", 0.25))
+    filt = eff.get("filter", "enemy")
+    inner = eff.get("effects", [])
+    first = ctx.hit
+    if first is None:
+        found = _filtered(world, ctx, ctx.px, ctx.py, radius, filt, 1)
+        if not found:
+            return
+        first = found[0]
+
+    def hop(target, left: int, scale: float, seen: set):
+        if target is None or not target.alive:
+            return
+        seen.add(target.id)
+        c2 = ctx.with_hit(target)
+        execute(world, c2, _scaled(inner, scale))
+        world.emit("fx", fx="chain", x=round(target.x), y=round(target.y),
+                   r=40, k=ctx.ability_key, team=ctx.caster.team)
+        if left <= 1:
+            return
+        nxt = [u for u in _filtered(world, ctx, target.x, target.y, radius, filt)
+               if u.id not in seen]
+        if not nxt:
+            return
+        nxt.sort(key=lambda u: vmath.dist_sq(target.x, target.y, u.x, u.y))
+        world.schedule(delay, lambda t=nxt[0], l=left - 1, s=scale * decay:
+                       hop(t, l, s, seen))
+
+    hop(first, jumps, 1.0, set())
+
+
+def _scaled(effects: list, scale: float) -> list:
+    """Копия списка эффектов с умноженными числовыми величинами."""
+    if scale >= 0.999:
+        return effects
+    out = []
+    for e in effects:
+        e2 = dict(e)
+        for key in ("amount", "dps", "heal"):
+            if key in e2 and isinstance(e2[key], (int, float)):
+                e2[key] = e2[key] * scale
+            elif key in e2 and isinstance(e2[key], (list, tuple)):
+                e2[key] = [v * scale for v in e2[key]]
+        out.append(e2)
+    return out
+
+
+def _op_restore_mana(world, ctx, eff):
+    amount = float(lv(eff.get("amount", 0), ctx.level))
+    pct = float(lv(eff.get("pct", 0), ctx.level))
+    for t in _resolve_targets(world, ctx, eff):
+        gain = amount + (t.max_mana * pct / 100.0 if pct else 0.0)
+        if gain <= 0 or t.max_mana <= 0:
+            continue
+        t.mana = min(t.max_mana, t.mana + gain)
+        world.emit("mana", id=t.id, v=round(gain))
+
+
+def _op_mana_burn(world, ctx, eff):
+    amount = float(lv(eff.get("amount", 0), ctx.level))
+    per_int = float(lv(eff.get("per_int", 0), ctx.level))
+    ratio = float(lv(eff.get("damage_per_mana", 0), ctx.level))
+    for t in _resolve_targets(world, ctx, eff):
+        burn = amount
+        if per_int:
+            st = {}
+            t.aggregate_stats(st)
+            burn += per_int * t._attributes(st)[2]
+        burn = min(burn, t.mana)
+        if burn <= 0:
+            continue
+        t.mana -= burn
+        world.emit("mana", id=t.id, v=-round(burn))
+        if ratio:
+            combat.apply_damage(world, t, burn * ratio, DMG_MAGICAL, ctx.caster,
+                                ctx.source, ctx.ability_key, ctx.pierces_mi)
+
+
+def _op_grant_gold(world, ctx, eff):
+    amount = float(lv(eff.get("amount", 0), ctx.level))
+    for t in _resolve_targets(world, ctx, eff):
+        if t.etype == "hero":
+            world.grant_gold(t, amount, ctx.ability_key,
+                             apply_mult=bool(eff.get("apply_mult", False)))
+
+
+def _op_grant_xp(world, ctx, eff):
+    amount = float(lv(eff.get("amount", 0), ctx.level))
+    for t in _resolve_targets(world, ctx, eff):
+        if t.etype == "hero":
+            world.grant_xp(t, amount, apply_mult=bool(eff.get("apply_mult", False)))
+
+
+def _op_true_sight(world, ctx, eff):
+    duration = float(lv(eff.get("duration", 0), ctx.level))
+    radius = float(lv(eff.get("radius", 0), ctx.level))
+    key = eff.get("key") or f"{ctx.ability_key}_truesight"
+    for t in _resolve_targets(world, ctx, eff):
+        t.add_modifier(mods.Modifier(key, duration, name="Истинное зрение",
+                                     flags=F_TRUESIGHT, dispellable=False,
+                                     source_id=ctx.caster.id,
+                                     data={"radius": radius}, visual="truesight"))
+
+
+def _op_ghost(world, ctx, eff):
+    """Эфирная форма: физический урон не проходит, магический усилен."""
+    duration = float(lv(eff.get("duration", 0), ctx.level))
+    amp = float(lv(eff.get("magic_amp", 0), ctx.level))
+    key = eff.get("key") or f"{ctx.ability_key}_ghost"
+    stats = {"damage_taken_pct": amp} if amp else {}
+    for t in _resolve_targets(world, ctx, eff):
+        t.add_modifier(mods.Modifier(key, duration, name="Эфирная форма",
+                                     flags=F_ETHEREAL, stats=stats,
+                                     source_id=ctx.caster.id, visual="ghost"))
+
+
+def _op_cyclone(world, ctx, eff):
+    """Подбрасывает цель: она неуязвима, обездвижена и ничего не делает."""
+    duration = float(lv(eff.get("duration", 0), ctx.level))
+    key = eff.get("key") or f"{ctx.ability_key}_cyclone"
+    from .consts import F_INVULNERABLE, F_ROOTED, F_SILENCED, F_DISARMED
+    flags = F_INVULNERABLE | F_ROOTED | F_SILENCED | F_DISARMED
+    for t in _resolve_targets(world, ctx, eff):
+        t.purge(False)
+        m = mods.Modifier(key, t.scaled_duration(duration), name="Внезапный созвон",
+                          flags=flags, dispellable=False, source_id=ctx.caster.id,
+                          visual="cyclone")
+        m.pierces_magic_immunity = ctx.pierces_mi
+        if t.add_modifier(m) is not None:
+            t.order_stop()
+            world.forced_moves.pop(t.id, None)
+            world.channels.pop(t.id, None)
+        after = eff.get("on_land")
+        if after:
+            world.schedule(duration, lambda u=t: execute(world, ctx.with_hit(u), after))
+
+
+def _op_on_take_damage(world, ctx, eff):
+    """Возврат урона на время. Пассивный вариант собирается в refresh_triggers."""
+    # В активке длительность обязана быть задана данными. Если её забыли —
+    # берём умеренное значение вместо «висит вечно», но это стоит поправить
+    # в данных, а не полагаться на подстановку.
+    duration = float(lv(eff.get("duration", 0), ctx.level)) or 5.0
+    key = eff.get("key") or f"{ctx.ability_key}_reflect"
+    m = mods.Modifier(key, duration, name=eff.get("name", "Возврат урона"),
+                      source_id=ctx.caster.id, dispellable=False, visual="reflect",
+                      data={"reflect_effects": eff.get("effects", []),
+                            "reflect_pct": float(eff.get("reflect_pct", 0))})
+    ctx.caster.add_modifier(m)
+
+
+def _op_toggle_pulse(world, ctx, eff):
+    """Обёртка: содержимое применяется, пока способность включена.
+    Сам цикл ведёт мир, здесь — разовое применение одного такта."""
+    execute(world, ctx, eff.get("effects", []))
+
+
 _HANDLERS = {
     "damage": _op_damage,
     "heal": _op_heal,
@@ -447,6 +637,16 @@ _HANDLERS = {
     "channel": _op_channel,
     "summon": _op_summon,
     "illusion": _op_illusion,
+    "chain": _op_chain,
+    "restore_mana": _op_restore_mana,
+    "mana_burn": _op_mana_burn,
+    "grant_gold": _op_grant_gold,
+    "grant_xp": _op_grant_xp,
+    "true_sight": _op_true_sight,
+    "ghost": _op_ghost,
+    "cyclone": _op_cyclone,
+    "toggle_pulse": _op_toggle_pulse,
+    "on_take_damage": _op_on_take_damage,
 }
 
 

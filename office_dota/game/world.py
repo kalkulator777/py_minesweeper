@@ -10,15 +10,21 @@ import random
 
 from . import abilities as ab, combat, content as C, gamemap as gm, vmath
 from .consts import (
+    IS_DISABLED as IS_DISABLED_MASK,
     ATTACK_RANGE_BUFFER, DAY_NIGHT_PERIOD, DELIVERY_TIME, DMG_MAGICAL, DMG_PHYSICAL,
     E_ANCIENT, E_BARRACKS, E_CREEP, E_FOUNTAIN, E_HERO, E_ILLUSION, E_NEUTRAL,
     E_SUMMON, E_TOWER, E_WARD, F_CHANNELING, F_INVISIBLE, F_TAUNTED, F_TRUESIGHT,
     ORDER_ATTACK_MOVE, ORDER_ATTACK_UNIT, ORDER_CAST, ORDER_HOLD, ORDER_MOVE,
     ORDER_NONE, ORDER_STOP, PHASE_FINISHED, PHASE_RUNNING,
-    SRC_ATTACK, SRC_TOWER, TEAM_DEV, TEAM_MGMT, TEAM_NEUTRAL, TICK_DT,
+    SRC_ATTACK, SRC_ITEM, SRC_TOWER, TEAM_DEV, TEAM_MGMT, TEAM_NEUTRAL, TICK_DT,
     TEAM_NAMES, enemy_of,
 )
 from .entities import Building, Creep, Hero, Projectile, Unit
+
+
+def _has_blink(defn: dict) -> bool:
+    act = defn.get("active") or {}
+    return any(e.get("op") == "blink" for e in act.get("effects", []))
 from .spatial import SpatialHash
 
 CREEP_AGGRO_RADIUS = 500.0
@@ -92,6 +98,7 @@ class World:
         self.channels: dict[int, Channel] = {}
         self._scheduled: list[tuple[float, object]] = []
         self.last_damage_by: dict[int, float] = {}
+        self._toggle_acc: dict[tuple[int, int], float] = {}
 
         self.events: list[dict] = []
         self.next_wave_time = C.WAVES.get("first_wave_time", 30.0)
@@ -261,6 +268,7 @@ class World:
         self._run_scheduled()
         self._tick_modifiers(alive, dt)
         self._tick_cooldowns(dt)
+        self._tick_toggles(dt)
         self._tick_regen(alive, dt)
         self._tick_auras(alive, dt)
         self._tick_forced_moves(dt)
@@ -319,6 +327,41 @@ class World:
                 h.deliveries = [d for d in h.deliveries if d["t"] > 0]
                 for d in ready:
                     self.deliver_item(h, d["key"])
+
+    def _tick_toggles(self, dt: float) -> None:
+        """Включённые способности применяются раз в интервал и жрут ману.
+
+        Без этого не существуют «Духота в серверной» и «Начисление пени» —
+        тоггл в спецификации срабатывал бы один раз при включении.
+        """
+        for h in self.heroes.values():
+            if not h.alive:
+                continue
+            for i, a in enumerate(h.abilities):
+                if not a.toggled:
+                    continue
+                if a.level <= 0 or (h.flags & IS_DISABLED_MASK):
+                    a.toggled = False
+                    continue
+                interval = float(a.defn.get("toggle_interval", 1.0))
+                a.charges = getattr(a, "charges", 0)
+                key = f"_tg{i}"
+                acc = self._toggle_acc.get((h.id, i), 0.0) + dt
+                if acc < interval:
+                    self._toggle_acc[(h.id, i)] = acc
+                    continue
+                self._toggle_acc[(h.id, i)] = acc - interval
+                cost = a.mana_cost()
+                if cost > 0:
+                    if h.mana < cost:
+                        a.toggled = False
+                        self.emit("toggle", id=h.id, k=a.key, on=0)
+                        continue
+                    h.mana -= cost
+                ctx = ab.EffectContext(
+                    h, None, h.x, h.y, a.level, a.key,
+                    pierces_mi=bool(a.defn.get("pierces_magic_immunity", False)))
+                ab.execute(self, ctx, a.defn.get("effects", []))
 
     def _tick_regen(self, alive, dt: float) -> None:
         for u in alive:
@@ -876,6 +919,35 @@ class World:
             self.register(il)
             self.schedule(duration, lambda u=il: self.kill_unit(u, None, "expire"))
 
+    def run_damage_reactions(self, target, attacker, amount: float, dtype: str) -> None:
+        """Срабатывания «когда меня бьют»: возврат урона, блокировка телепорта."""
+        if attacker is None or attacker is target:
+            return
+        reactions = []
+        for eff, _src in getattr(target, "on_damaged_procs", ()) or ():
+            reactions.append((eff.get("effects") or [],
+                              float(eff.get("reflect_pct", 0))))
+        for m in target.modifiers:
+            if m.data and "reflect_effects" in m.data:
+                reactions.append((m.data["reflect_effects"],
+                                  float(m.data.get("reflect_pct", 0))))
+        for inner, pct in reactions:
+            if not inner:
+                continue
+            scaled = inner
+            if pct:
+                scaled = [dict(e, amount=amount * pct / 100.0)
+                          if e.get("op") == "damage" else e for e in inner]
+            ctx = ab.EffectContext(target, attacker, attacker.x, attacker.y,
+                                   1, "reflect", source=SRC_ITEM)
+            ab.execute(self, ctx, scaled)
+        # Телепорт блокируется уроном от героя — как кинжал в доте
+        if attacker.etype == E_HERO and isinstance(target, Hero):
+            for it in target.all_items():
+                if it.defn.get("blocked_by_damage") or _has_blink(it.defn):
+                    it.disabled_until = self.time + float(
+                        it.defn.get("damage_block_sec", 3.0))
+
     def record_damage(self, attacker, target, amount: float, dtype: str, key: str) -> None:
         if attacker is not None:
             self.last_damage_by[attacker.id] = \
@@ -889,6 +961,7 @@ class World:
                 attacker.team != target.team:
             self._credit_assist(target, attacker)
         self.emit("dmg", id=target.id, v=round(amount), dt=dtype)
+        self.run_damage_reactions(target, attacker, amount, dtype)
 
     def record_heal(self, healer, target, amount: float, key: str) -> None:
         if isinstance(healer, Hero):
@@ -1136,6 +1209,12 @@ class World:
             self.emit("victory", team=enemy, name=TEAM_NAMES[enemy])
 
     def _on_hero_death(self, h: Hero, killer) -> None:
+        for i, it in enumerate(h.items):
+            if it is not None and it.defn.get("drop_on_death"):
+                h.items[i] = None
+                h._stats_dirty = True
+                self.emit("item_drop", id=h.id, k=it.key,
+                          x=round(h.x), y=round(h.y))
         h.deaths += 1
         h.kill_streak = 0
         h.respawn_timer = C.respawn_time(h.level)
@@ -1296,7 +1375,7 @@ class World:
             return False, "нет такой способности"
         a = h.abilities[idx]
         ok, why = a.ready(h)
-        if not ok:
+        if not ok and not (a.targeting == "toggle" and why == "мало маны"):
             return False, why
 
         target = self.get_unit(target_id) if target_id else None
@@ -1304,6 +1383,9 @@ class World:
         if tgt in ("unit_enemy", "unit_ally", "unit_any"):
             if target is None:
                 return False, "нужна цель"
+            allowed = a.defn.get("target_types")
+            if allowed and target.etype not in allowed:
+                return False, "неподходящая цель"
             if tgt == "unit_enemy" and target.team == h.team:
                 return False, "цель должна быть вражеской"
             if tgt == "unit_ally" and target.team != h.team:
@@ -1321,6 +1403,12 @@ class World:
                 h.order = ORDER_MOVE
                 h.order_x, h.order_y = px, py
                 return True, ""
+
+        if tgt == "toggle":
+            a.toggled = not a.toggled
+            self._toggle_acc[(h.id, idx)] = 0.0
+            self.emit("toggle", id=h.id, k=a.key, on=1 if a.toggled else 0)
+            return True, ""
 
         h.pending_cast = None
         h.mana -= a.mana_cost()
@@ -1361,6 +1449,9 @@ class World:
         if a.get("targeting") in ("unit_enemy", "unit_ally", "unit_any"):
             if target is None:
                 return False, "нужна цель"
+            allowed = a.get("target_types") or it.defn.get("target_types")
+            if allowed and target.etype not in allowed:
+                return False, "неподходящая цель"
             px, py = target.x, target.y
         rng_limit = float(a.get("cast_range", 0))
         if rng_limit > 0 and vmath.dist(h.x, h.y, px, py) > rng_limit + h.radius:
