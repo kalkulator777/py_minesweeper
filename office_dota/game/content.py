@@ -143,11 +143,96 @@ HEROES: dict = _HEROES if _HEROES else {"stub": _FALLBACK_HERO}
 ITEMS: dict = _ITEMS
 SHOP_LAYOUT: dict = _SHOP
 
+# ==========================================================================
+#  Нормализация
+# ==========================================================================
+# Данные пишутся отдельно от движка и могут расходиться в мелочах схемы
+# (урон числом или диапазоном, разные имена полей награды). Движок владеет
+# канонической формой, а загрузчик приводит к ней что угодно — так данные
+# и код развиваются независимо.
+
+def _as_range(v, default=(0.0, 0.0)) -> list[float]:
+    if v is None:
+        return [float(default[0]), float(default[1])]
+    if isinstance(v, (list, tuple)):
+        if len(v) >= 2:
+            return [float(v[0]), float(v[1])]
+        if len(v) == 1:
+            return [float(v[0]), float(v[0])]
+        return [float(default[0]), float(default[1])]
+    return [float(v), float(v)]
+
+
+def _pick(d: dict, *names, default=None):
+    for n in names:
+        if n in d:
+            return d[n]
+    return default
+
+
+def _norm_creep(d: dict) -> dict:
+    return {
+        "name": d.get("name", "Крип"),
+        "hp": float(d.get("hp", 500)),
+        "damage": _as_range(d.get("damage"), (20, 24)),
+        "armor": float(d.get("armor", 0)),
+        "magic_resist": float(d.get("magic_resist", 0)),
+        "attack_range": float(d.get("attack_range", 100)),
+        "bat": float(d.get("bat", 1.0)),
+        "move_speed": float(d.get("move_speed", 325)),
+        "bounty_gold": _as_range(d.get("bounty_gold"), (30, 40)),
+        "bounty_xp": float(d.get("bounty_xp", 50)),
+        "vision": float(d.get("vision", 750)),
+        "building_damage_mult": float(d.get("building_damage_mult", 1.0)),
+        "hp_regen": float(d.get("hp_regen", 0.0)),
+    }
+
+
+def _norm_building(d: dict) -> dict:
+    return {
+        "name": d.get("name", "Строение"),
+        "hp": float(d.get("hp", 1500)),
+        "damage": _as_range(d.get("damage"), (0, 0)),
+        "armor": float(d.get("armor", 0)),
+        "magic_resist": float(d.get("magic_resist", 0)),
+        "attack_range": float(d.get("attack_range", 0)),
+        "bat": float(d.get("bat", 1.0)),
+        "team_bounty": float(_pick(d, "team_bounty", "bounty_team_gold", default=0)),
+        "killer_bounty": float(_pick(d, "killer_bounty", "bounty_killer_gold", default=0)),
+        "hp_regen": float(d.get("hp_regen", 0)),
+        "backdoor_protection": bool(d.get("backdoor_protection", False)),
+        "vision": float(d.get("vision", 1400)),
+    }
+
+
+def _norm_waves(d: dict) -> dict:
+    comp = d.get("composition") or {}
+    siege = d.get("siege") or {}
+    return {
+        "first_wave_time": float(_pick(d, "first_wave_spawn_sec", "first_wave_time",
+                                       default=20.0)),
+        "interval": float(_pick(d, "interval_sec", "interval", default=25.0)),
+        "melee_per_wave": int(comp.get("melee_creep",
+                                       d.get("melee_per_wave", 3))),
+        "ranged_per_wave": int(comp.get("ranged_creep",
+                                        d.get("ranged_per_wave", 1))),
+        "siege_unit": siege.get("unit", "siege_creep"),
+        "siege_count": int(siege.get("count", 1)),
+        "siege_first_time": float(_pick(siege, "first_spawn_sec",
+                                        default=d.get("siege_first_wave", 180.0))),
+        "siege_every_n": int(_pick(siege, "every_n_waves",
+                                   default=d.get("siege_every_n_waves", 3))),
+        "raw": d,
+    }
+
+
 XP_TABLE: list = getattr(_t, "XP_TABLE", _FALLBACK_XP)
 MAX_LEVEL: int = getattr(_t, "MAX_LEVEL", 25)
-CREEPS: dict = getattr(_t, "CREEPS", _FALLBACK_CREEPS)
-BUILDINGS: dict = getattr(_t, "BUILDINGS", _FALLBACK_BUILDINGS)
-WAVES: dict = getattr(_t, "WAVE_SCHEDULE", _FALLBACK_WAVES)
+CREEPS: dict = {k: _norm_creep(v) for k, v in
+                (getattr(_t, "CREEPS", None) or _FALLBACK_CREEPS).items()}
+BUILDINGS: dict = {k: _norm_building(v) for k, v in
+                   (getattr(_t, "BUILDINGS", None) or _FALLBACK_BUILDINGS).items()}
+WAVES: dict = _norm_waves(getattr(_t, "WAVE_SCHEDULE", None) or _FALLBACK_WAVES)
 JUNGLE: dict = getattr(_t, "JUNGLE", {})
 RUNES: dict = getattr(_t, "RUNES", {})
 ECONOMY: dict = getattr(_t, "ECONOMY", _FALLBACK_ECONOMY)
@@ -209,8 +294,13 @@ def level_for_xp(xp: float) -> int:
 
 
 def respawn_time(level: int) -> float:
-    idx = min(max(1, level), len(RESPAWN_TABLE) - 1)
-    return float(RESPAWN_TABLE[idx])
+    """Время возрождения. Таблица может быть записана двумя способами:
+    ровно MAX_LEVEL значений (индекс level-1) или с фиктивным нулём в начале
+    (индекс level). Определяем по длине, чтобы не зависеть от соглашения автора."""
+    level = max(1, min(level, MAX_LEVEL))
+    if len(RESPAWN_TABLE) > MAX_LEVEL:
+        return float(RESPAWN_TABLE[min(level, len(RESPAWN_TABLE) - 1)])
+    return float(RESPAWN_TABLE[min(level - 1, len(RESPAWN_TABLE) - 1)])
 
 
 def status() -> dict:

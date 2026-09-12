@@ -536,7 +536,7 @@ class Projectile(Entity):
 
     __slots__ = ("source_id", "target_id", "tx", "ty", "speed", "on_hit",
                  "radius_hit", "pierce", "traveled", "max_dist", "hit_ids",
-                 "is_attack", "attack_damage", "is_crit", "visual", "ability_key")
+                 "is_attack", "attack_damage", "is_crit", "visual", "ability_key", "level")
 
     def __init__(self, eid: int, team: int, x: float, y: float, speed: float,
                  source_id: int, target_id: int = 0, tx: float = 0.0, ty: float = 0.0,
@@ -558,3 +558,4 @@ class Projectile(Entity):
         self.is_crit = False
         self.visual = visual
         self.ability_key = ""
+        self.level = 1
