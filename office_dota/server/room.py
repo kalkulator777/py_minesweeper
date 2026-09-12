@@ -125,6 +125,7 @@ class Room:
             return
         # В матче — не выкидываем, даём время вернуться
         self._disconnect_deadlines[pid] = time.monotonic() + DISCONNECT_GRACE
+        print(f"[room] {p.name} отключился, дедлайн через {DISCONNECT_GRACE}с, фаза={self.phase}", flush=True)
         self.broadcast_system(f"{p.name} отключился, ждём {int(DISCONNECT_GRACE)} с")
 
     def connected_players(self) -> list[Player]:
@@ -190,7 +191,8 @@ class Room:
             p = self.players.get(pid)
             if p is None or p.connected:
                 continue
-            if self.phase == PHASE_RUNNING:
+            print(f"[room] дедлайн {p.name} истёк, фаза={self.phase}", flush=True)
+            if self.phase in (PHASE_RUNNING, PHASE_PREGAME):
                 self.set_pause(PAUSE_REASON_DISCONNECT, waiting=[pid])
 
     # ======================================================================
@@ -309,3 +311,183 @@ class Room:
             sb = scoreboard(self.world)
             sb["t"] = "score"
             self.broadcast(sb)
+
+    # ======================================================================
+    #  Команды от клиента
+    # ======================================================================
+    def handle(self, p: Player, msg: dict) -> None:
+        kind = msg.get("t")
+        fn = getattr(self, f"_cmd_{kind}", None)
+        if fn is None:
+            self.send(p, {"t": "err", "m": f"неизвестная команда {kind}"})
+            return
+        try:
+            fn(p, msg)
+        except Exception as exc:                              # noqa: BLE001
+            self.send(p, {"t": "err", "m": f"{type(exc).__name__}: {exc}"})
+
+    # --- лобби -------------------------------------------------------------
+    def _cmd_set_name(self, p: Player, m: dict) -> None:
+        name = str(m.get("name", "")).strip()[:24]
+        if name:
+            p.name = name
+            if self.world and p.hero_id:
+                h = self.world.heroes.get(p.hero_id)
+                if h is not None:
+                    h.name = name
+            self.broadcast_state()
+
+    def _cmd_set_team(self, p: Player, m: dict) -> None:
+        if self.phase != PHASE_LOBBY:
+            return
+        team = int(m.get("team", 0))
+        if team in (TEAM_DEV, TEAM_MGMT):
+            p.team = team
+            p.view = ClientView(team)
+            self.broadcast_state()
+
+    def _cmd_pick_hero(self, p: Player, m: dict) -> None:
+        if self.phase != PHASE_LOBBY:
+            return
+        key = str(m.get("hero", ""))
+        if key not in C.HEROES:
+            self.send(p, {"t": "err", "m": "нет такого героя"})
+            return
+        taken = {pl.hero_key for pl in self.players.values()
+                 if pl is not p and pl.team == p.team}
+        if key in taken:
+            self.send(p, {"t": "err", "m": "герой уже занят в вашей команде"})
+            return
+        p.hero_key = key
+        self.broadcast_state()
+
+    def _cmd_ready(self, p: Player, m: dict) -> None:
+        p.ready = bool(m.get("v", True))
+        self.broadcast_state()
+
+    def _cmd_start(self, p: Player, m: dict) -> None:
+        ok, err = self.start_match()
+        if not ok:
+            self.send(p, {"t": "err", "m": err})
+
+    def _cmd_add_bot(self, p: Player, m: dict) -> None:
+        if self.phase != PHASE_LOBBY:
+            return
+        team = int(m.get("team", TEAM_DEV))
+        key = str(m.get("hero", "")) or self._free_hero(team)
+        if not key:
+            return
+        bid = f"bot:{len(self.players)}:{key}"
+        b = Player(bid, f"Бот — {C.HEROES[key]['name']}")
+        b.team = team
+        b.hero_key = key
+        b.connected = False
+        b.replaced_by_bot = True
+        self.players[bid] = b
+        self.broadcast_state()
+
+    def _free_hero(self, team: int) -> str:
+        taken = {pl.hero_key for pl in self.players.values() if pl.team == team}
+        for k in C.HEROES:
+            if k not in taken:
+                return k
+        return ""
+
+    def _cmd_kick(self, p: Player, m: dict) -> None:
+        if not p.is_host or self.phase != PHASE_LOBBY:
+            return
+        self.players.pop(str(m.get("pid", "")), None)
+        self.broadcast_state()
+
+    # --- пауза -------------------------------------------------------------
+    def _cmd_pause(self, p: Player, m: dict) -> None:
+        self.set_pause(PAUSE_REASON_MANUAL, by=p.name)
+
+    def _cmd_unpause(self, p: Player, m: dict) -> None:
+        self.request_unpause(f"{p.name} снимает паузу")
+
+    def _cmd_play_without(self, p: Player, m: dict) -> None:
+        self.play_without(str(m.get("pid", "")))
+
+    def _cmd_chat(self, p: Player, m: dict) -> None:
+        text = str(m.get("text", "")).strip()[:200]
+        if not text:
+            return
+        entry = {"from": p.name, "team": p.team, "text": text,
+                 "at": round(time.time(), 1)}
+        self.chat.append(entry)
+        self.chat = self.chat[-80:]
+        self.broadcast({"t": "chat", "m": entry})
+
+    # --- игровые действия --------------------------------------------------
+    def _my_hero(self, p: Player):
+        if self.world is None or not p.hero_id:
+            return None
+        h = self.world.heroes.get(p.hero_id)
+        if h is None or not h.alive:
+            return None
+        return h
+
+    def _cmd_order(self, p: Player, m: dict) -> None:
+        h = self._my_hero(p)
+        if h is None or self.paused:
+            return
+        self.world.issue_order(h, str(m.get("kind", "move")),
+                               float(m.get("x", 0)), float(m.get("y", 0)),
+                               int(m.get("target", 0)))
+
+    def _cmd_cast(self, p: Player, m: dict) -> None:
+        h = self._my_hero(p)
+        if h is None or self.paused:
+            return
+        ok, why = self.world.cast_ability(h, int(m.get("i", 0)),
+                                          int(m.get("target", 0)),
+                                          float(m.get("x", 0)), float(m.get("y", 0)))
+        if not ok:
+            self.send(p, {"t": "err", "m": why, "quiet": 1})
+
+    def _cmd_item(self, p: Player, m: dict) -> None:
+        h = self._my_hero(p)
+        if h is None or self.paused:
+            return
+        ok, why = self.world.use_item(h, int(m.get("slot", 0)),
+                                      int(m.get("target", 0)),
+                                      float(m.get("x", 0)), float(m.get("y", 0)))
+        if not ok:
+            self.send(p, {"t": "err", "m": why, "quiet": 1})
+
+    def _cmd_level_up(self, p: Player, m: dict) -> None:
+        h = self._my_hero(p)
+        if h is None:
+            return
+        ok, why = self.world.level_ability(h, int(m.get("i", 0)))
+        if not ok:
+            self.send(p, {"t": "err", "m": why, "quiet": 1})
+
+    def _cmd_buy(self, p: Player, m: dict) -> None:
+        h = self._my_hero(p) or (self.world.heroes.get(p.hero_id) if self.world else None)
+        if h is None:
+            return
+        ok, why = self.world.buy_item(h, str(m.get("k", "")))
+        if not ok:
+            self.send(p, {"t": "err", "m": why, "quiet": 1})
+
+    def _cmd_sell(self, p: Player, m: dict) -> None:
+        h = self.world.heroes.get(p.hero_id) if self.world else None
+        if h is not None:
+            self.world.sell_item(h, int(m.get("slot", 0)))
+
+    def _cmd_swap(self, p: Player, m: dict) -> None:
+        h = self.world.heroes.get(p.hero_id) if self.world else None
+        if h is None:
+            return
+        a, b = int(m.get("a", 0)), int(m.get("b", 0))
+        slots = h.items + h.backpack
+        if 0 <= a < len(slots) and 0 <= b < len(slots):
+            slots[a], slots[b] = slots[b], slots[a]
+            h.items = slots[:len(h.items)]
+            h.backpack = slots[len(h.items):]
+            h._stats_dirty = True
+
+    def _cmd_ping(self, p: Player, m: dict) -> None:
+        self.send(p, {"t": "pong", "c": m.get("c")})

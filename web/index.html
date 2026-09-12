@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Офисная дота</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🖥️</text></svg>">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ================= МЕНЮ ================= -->
+<section id="screen-menu" class="screen active">
+  <div class="menu-wrap">
+    <header class="brand">
+      <h1>Офисная дота</h1>
+      <p class="tagline">Три линии, лес, трон. Только вместо Роши — легаси-код.</p>
+    </header>
+
+    <div class="menu-card">
+      <label class="field">
+        <span>Как тебя зовут</span>
+        <input id="inp-name" maxlength="24" placeholder="Имя в игре" autocomplete="off">
+      </label>
+
+      <div class="menu-actions">
+        <button id="btn-host" class="btn primary big">Создать матч здесь</button>
+      </div>
+
+      <div class="lan-block">
+        <div class="lan-head">
+          <h2>Матчи в сети</h2>
+          <span id="lan-status" class="muted">ищу…</span>
+        </div>
+        <ul id="lan-list" class="lan-list"></ul>
+        <details class="manual">
+          <summary>Подключиться по адресу вручную</summary>
+          <div class="manual-row">
+            <input id="inp-addr" placeholder="192.168.1.42:8888" autocomplete="off">
+            <button id="btn-connect" class="btn">Перейти</button>
+          </div>
+        </details>
+      </div>
+    </div>
+
+    <footer id="menu-foot" class="muted"></footer>
+  </div>
+</section>
+
+<!-- ================= ЛОББИ ================= -->
+<section id="screen-lobby" class="screen">
+  <div class="lobby-wrap">
+    <header class="lobby-head">
+      <h2 id="lobby-title">Лобби</h2>
+      <div class="lobby-share">
+        <span class="muted">Коллегам:</span>
+        <code id="lobby-url">—</code>
+      </div>
+    </header>
+
+    <div class="teams">
+      <div class="team-col" data-team="0">
+        <h3 class="team-name dev">Разработка</h3>
+        <ul class="roster" id="roster-0"></ul>
+        <button class="btn small" data-join-team="0">Встать сюда</button>
+        <button class="btn small ghost" data-add-bot="0">+ бот</button>
+      </div>
+      <div class="team-col" data-team="1">
+        <h3 class="team-name mgmt">Менеджмент</h3>
+        <ul class="roster" id="roster-1"></ul>
+        <button class="btn small" data-join-team="1">Встать сюда</button>
+        <button class="btn small ghost" data-add-bot="1">+ бот</button>
+      </div>
+    </div>
+
+    <div class="picker">
+      <h3>Выбери героя</h3>
+      <div id="hero-grid" class="hero-grid"></div>
+      <div id="hero-detail" class="hero-detail"></div>
+    </div>
+
+    <div class="lobby-foot">
+      <button id="btn-start" class="btn primary big">Начать матч</button>
+      <span id="lobby-hint" class="muted"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ================= ИГРА ================= -->
+<section id="screen-game" class="screen">
+  <canvas id="cv"></canvas>
+
+  <div id="topbar">
+    <div class="score dev"><span id="score-dev">0</span></div>
+    <div class="clock"><span id="clock">0:00</span><span id="wave-note" class="muted"></span></div>
+    <div class="score mgmt"><span id="score-mgmt">0</span></div>
+  </div>
+
+  <div id="killfeed"></div>
+  <div id="toast"></div>
+
+  <div id="minimap-wrap"><canvas id="minimap" width="240" height="240"></canvas></div>
+
+  <div id="hud">
+    <div id="hud-hero">
+      <div id="portrait"></div>
+      <div id="hero-bars">
+        <div class="bar hp"><i id="bar-hp"></i><span id="txt-hp"></span></div>
+        <div class="bar mana"><i id="bar-mana"></i><span id="txt-mana"></span></div>
+        <div class="bar xp"><i id="bar-xp"></i></div>
+      </div>
+      <div id="hero-stats"></div>
+    </div>
+    <div id="abilities"></div>
+    <div id="items"></div>
+    <div id="hud-right">
+      <div id="gold">0 ₿</div>
+      <button id="btn-shop" class="btn small">Магазин <kbd>P</kbd></button>
+      <button id="btn-pause" class="btn small">Пауза <kbd>F9</kbd></button>
+    </div>
+  </div>
+
+  <div id="buffs"></div>
+  <div id="respawn" class="hidden"></div>
+
+  <aside id="shop" class="hidden">
+    <header><h3>Магазин</h3><button id="shop-close" class="btn tiny">✕</button></header>
+    <input id="shop-search" placeholder="поиск предмета…" autocomplete="off">
+    <div id="shop-body"></div>
+  </aside>
+
+  <aside id="scoreboard" class="hidden"></aside>
+
+  <div id="chat">
+    <div id="chat-log"></div>
+    <input id="chat-input" placeholder="Enter — написать в чат" maxlength="200">
+  </div>
+
+  <div id="pause-overlay" class="hidden">
+    <div class="pause-card">
+      <h2 id="pause-title">Пауза</h2>
+      <p id="pause-sub"></p>
+      <div id="pause-waiting"></div>
+      <div class="pause-actions">
+        <button id="btn-unpause" class="btn primary">Продолжить</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="endscreen" class="hidden"></div>
+</section>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

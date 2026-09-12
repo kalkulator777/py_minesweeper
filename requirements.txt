@@ -1,1 +1,1 @@
-Python 3.0 or newer
+tornado>=6.4
