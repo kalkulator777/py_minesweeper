@@ -99,6 +99,10 @@ class World:
 
         self._aura_accum = 0.0
         self._build_map()
+        from .neutrals import Neutrals
+        self.neutrals = Neutrals(self)
+        from .bots import BotDirector
+        self.bots = BotDirector(self)
 
     # --- служебное ---------------------------------------------------------
     def next_id(self) -> int:
@@ -266,6 +270,8 @@ class World:
         self._tick_projectiles(dt)
         self._tick_respawn(dt)
         self._tick_waves()
+        self.neutrals.tick(dt)
+        self.bots.tick(dt)
         self._tick_passive_gold(dt)
         self._check_victory()
 
@@ -435,7 +441,7 @@ class World:
         best = None
         best_score = 1e18
         for u in self.spatial.query(c.x, c.y, radius):
-            if not u.alive or u.etype == E_FOUNTAIN:
+            if not u.alive or u.etype == E_FOUNTAIN or not u.can_be_attacked:
                 continue
             if c.is_neutral:
                 if u.team == TEAM_NEUTRAL:
@@ -492,6 +498,8 @@ class World:
         best, best_score = None, 1e18
         for u in self.spatial.query(t.x, t.y, radius):
             if not u.alive or u.team == t.team or u.team == TEAM_NEUTRAL:
+                continue
+            if not u.can_be_attacked:
                 continue
             if u.is_building or not u.is_visible_to(t.team):
                 continue
@@ -633,6 +641,8 @@ class World:
         best, best_d = None, radius * radius
         for e in self.spatial.query(u.x, u.y, radius):
             if not e.alive or e.team == u.team or e.etype == E_FOUNTAIN:
+                continue
+            if not e.can_be_attacked:
                 continue
             if not e.is_visible_to(u.team):
                 continue
@@ -1027,6 +1037,8 @@ class World:
             self._on_building_death(u, owner)
         elif u.etype in (E_CREEP, E_NEUTRAL, E_SUMMON):
             self._on_creep_death(u, owner)
+            if u.etype == E_NEUTRAL:
+                self.neutrals.on_camp_unit_died(u)
 
         u.on_death(killer)
         self.emit("death", id=u.id, killer=owner.id if owner is not None else 0)
