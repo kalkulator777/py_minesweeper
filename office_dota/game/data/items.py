@@ -26,9 +26,11 @@
   Для собираемого предмета `cost == сумма cost компонентов + recipe_cost`.
   Повторяющийся ключ в `components` означает «нужно две штуки».
 * Поля сверх §7, добавленные движком: `charges` (обязательно у расходников),
-  `drop_on_death`, `target_types`, `blocked_by_damage` + `damage_block_sec`.
-  Всё это проверяется в validate(); неизвестные поля запрещены, чтобы опечатка
-  в данных не превращалась в молча отключённую механику.
+  `drop_on_death`, `target_types`, `blocked_by_damage` + `damage_block_sec`,
+  `gain_charge_on_enemy_cast` + `max_charges` — накопление зарядов от чужих
+  применений способностей рядом. Всё это проверяется в validate(); неизвестные
+  поля запрещены, чтобы опечатка в данных не превращалась в молча отключённую
+  механику.
 * Баланс цен — дотовский (DESIGN.md §2, Turbo). Доход в Turbo примерно ×2,
   поэтому цены не резались: игроки просто доходят до предметов вдвое быстрее.
   Ориентир: тир 3 — с 8–10-й минуты, тир 4 — с 12–15-й. Раньше 10-й минуты
@@ -59,7 +61,10 @@ ITEMS: dict[str, dict] = {
             "cooldown": 0,
             "mana_cost": 0,
             "effects": [
-                {"op": "stat_buff", "stats": {"mana_regen": 8}, "duration": 25, "target": "hit"},
+                # break_on_damage: движок снимает модификатор при уроне от героя
+                # (world._break_fragile_buffs). До него это было только обещанием в desc.
+                {"op": "stat_buff", "stats": {"mana_regen": 8}, "duration": 25,
+                 "target": "hit", "break_on_damage": True},
             ],
         },
         "desc": "Восстанавливает 200 маны за 25 секунд себе или союзнику. "
@@ -80,16 +85,27 @@ ITEMS: dict[str, dict] = {
         "stats": {},
         "passives": [],
         "active": {
-            "targeting": "point",
-            "cast_range": 500,
+            "targeting": "none",
+            "cast_range": 0,
             "cooldown": 0,
             "mana_cost": 0,
             "effects": [
-                {"op": "summon", "unit": "observer_camera", "count": 1, "duration": 360},
+                # Юнита-наблюдателя в движке нет и не будет (см. блок намеренных
+                # отличий ниже), а summon с неизвестным ключом молча превращался
+                # в обычного крипа ближнего боя рядом с кастером — content.creep_def
+                # падает на _FALLBACK_CREEPS["melee_creep"]. Поэтому камера висит
+                # на владельце и даёт то, ради чего вард и ставят, — обзор.
+                # Истинного зрения здесь намеренно нет: это работа «Трекера
+                # активности» (Dust), как Observer и Sentry разведены в доте.
+                {"op": "stat_buff", "key": "observer_ward_vision",
+                 "name": "Камера наблюдения",
+                 "stats": {"vision_day": 700, "vision_night": 700},
+                 "duration": 120, "target": "caster", "dispellable": False},
             ],
         },
-        "desc": "Вешает камеру: обзор 1600 на 6 минут. Враг её не видит, "
-                "пока специально не поищет. «Просто для безопасности, коллеги».",
+        "desc": "Две минуты вы видите на 700 дальше обычного. Это не вард: "
+                "камеру нельзя поставить в кустах и уйти — она висит на вас "
+                "и уходит вместе с вами. Невидимок не показывает.",
         "tier": 1,
     },
 
@@ -194,7 +210,8 @@ ITEMS: dict[str, dict] = {
             "cooldown": 0,
             "mana_cost": 0,
             "effects": [
-                {"op": "stat_buff", "stats": {"hp_regen": 40}, "duration": 10, "target": "hit"},
+                {"op": "stat_buff", "stats": {"hp_regen": 40}, "duration": 10,
+                 "target": "hit", "break_on_damage": True},
             ],
         },
         "desc": "400 HP за 10 секунд. Если в процессе прилетело от героя — "
@@ -364,6 +381,12 @@ ITEMS: dict[str, dict] = {
         "components": ["paperclip", "paperclip", "sticky_notes"],
         "recipe_cost": 190,
         "shop": "base",
+        # Заряд за каждое вражеское применение способности в радиусе 1200
+        # (world._charge_nearby_wands). Накопление работает и видно в интерфейсе,
+        # но тратить заряды активкой движок пока не умеет — величины ниже
+        # фиксированные, см. ENGINE_REQUESTS.
+        "gain_charge_on_enemy_cast": True,
+        "max_charges": 20,
         "stats": {"all_stats": 3},
         "passives": [],
         "active": {
@@ -377,7 +400,8 @@ ITEMS: dict[str, dict] = {
             ],
         },
         "desc": "В ящике стола есть всё: мгновенно 200 HP и 200 маны. "
-                "Самая дешёвая кнопка «выжить» в игре.",
+                "Каждое вражеское заклинание рядом добавляет в ящик ещё одну "
+                "мелочь — до 20 штук. Самая дешёвая кнопка «выжить» в игре.",
         "tier": 2,
     },
 
@@ -447,11 +471,12 @@ ITEMS: dict[str, dict] = {
             "cooldown": 22,
             "mana_cost": 0,
             "effects": [
-                {"op": "ghost", "duration": 4, "magic_amp": 40, "target": "caster"},
-                # Явный disarm — в доте эфирная форма запрещает атаковать. Если op ghost
-                # уже disarm'ит сам, строка просто дублирует эффект; если нет — без неё
-                # «Больничный» давал бы физический иммунитет и атаку одновременно.
-                {"op": "disarm", "duration": 4, "target": "caster"},
+                # ghost делает всё сам, дублировать его данными нельзя:
+                #   * F_ETHEREAL входит в маску CANNOT_ATTACK — явный disarm был дублем;
+                #   * combat.ETHEREAL_MAGIC_AMP уже даёт ровно +40% магического урона,
+                #     а magic_amp вешал сверх этого ещё и damage_taken_pct 40 на все типы.
+                #     Вместе выходило ×1.96 по магии и +40% по чистому урону вместо +40%.
+                {"op": "ghost", "duration": 4, "target": "caster"},
                 {"op": "stat_buff", "stats": {"move_speed": 30}, "duration": 4, "target": "caster"},
             ],
         },
@@ -494,12 +519,20 @@ ITEMS: dict[str, dict] = {
             "cooldown": 25,
             "mana_cost": 25,
             "effects": [
+                # damage_taken_pct -20 проверен: entities.damage_taken_mult = 1 + pct/100,
+                # то есть ×0.8 на входящий урон любого типа.
                 {"op": "stat_buff", "stats": {"damage_taken_pct": -20}, "duration": 4.5, "target": "caster"},
+                # ВНИМАНИЕ: возврат урона сейчас не работает и включать его данными нельзя.
+                # world.run_damage_reactions пропускает реакцию с пустым effects
+                # (`if not inner: continue`), так что reflect_pct без вложенного damage —
+                # мёртвая строка. Почему не чиню: см. ENGINE_REQUESTS, два активных
+                # «Ответить всем» уходят в рекурсивный пинг-понг и роняют матч.
                 {"op": "on_take_damage", "duration": 4.5, "reflect_pct": 100, "effects": []},
             ],
         },
-        "desc": "4.5 секунды всё, что прилетело вам, уходит обидчику чистым уроном — "
-                "и в копию всему отделу. Сами получаете на 20% меньше.",
+        "desc": "4.5 секунды входящий урон слабее на 20%. Ответ отправителю пока "
+                "висит в черновиках: возврат урона движок не проводит, "
+                "поэтому предмет работает только как броня и кнопка на размен.",
         "tier": 2,
     },
 
@@ -524,13 +557,17 @@ ITEMS: dict[str, dict] = {
                 {"op": "execute", "hp_threshold": 10000,
                  "target_types": ["creep", "neutral"],
                  "on_kill": [
-                     {"op": "grant_gold", "amount": 190, "target": "caster"},
-                     {"op": "grant_xp", "amount": 150, "target": "caster"},
+                     {"op": "grant_gold", "amount": 250, "target": "caster"},
+                     # from_target_bounty: опыт кратен награде съеденного, как у Midas.
+                     # Флат делал карту одинаковой на стажёре и на боссе леса;
+                     # ctx.hit на этой ветке — как раз съеденный юнит.
+                     {"op": "grant_xp", "from_target_bounty": 2.5, "target": "caster"},
                  ]},
             ],
         },
         "desc": "Списывает подрядчика со счёта: крип мгновенно исчезает, "
-                "а вы получаете 190₿ и 150 опыта. В героя картой не ткнуть.",
+                "а вы получаете 250₿ и 2.5 его опыта. Чем жирнее подрядчик, "
+                "тем выгоднее списание. В героя картой не ткнуть.",
         "tier": 2,
     },
 
@@ -597,7 +634,13 @@ ITEMS: dict[str, dict] = {
         "shop": "base",
         "stats": {"armor": 5, "hp_regen": 4, "all_stats": 2},
         "passives": [
-            {"op": "aura", "radius": 1200, "filter": "ally", "stats": {"armor": 2, "hp_regen": 2}},
+            # key обязателен: без него abilities.auras() зовёт модификатор просто
+            # "aura", и разные ауры затирают друг друга на одной цели.
+            # unique/unique_rank: «Корпоратив» собирается из «Тимбилдинга», их ауры
+            # не должны складываться — из группы остаётся сильнейшая.
+            {"op": "aura", "key": "teambuilding_aura", "name": "Тимбилдинг",
+             "radius": 1200, "filter": "ally", "stats": {"armor": 2, "hp_regen": 2},
+             "unique": "team_support_aura", "unique_rank": 1},
         ],
         "active": {
             "targeting": "none",
@@ -611,7 +654,8 @@ ITEMS: dict[str, dict] = {
                 ]},
             ],
         },
-        "desc": "Аура +2 брони и +2 HP/с команде. Активно: всем рядом 275 HP "
+        "desc": "Аура +2 брони и +2 HP/с команде — не складывается ни со вторым "
+                "тимбилдингом, ни с «Корпоративом». Активно: всем рядом 275 HP "
                 "и +3 брони на 25 с. Верёвочный курс всё-таки работает.",
         "tier": 2,
     },
@@ -681,7 +725,10 @@ ITEMS: dict[str, dict] = {
         "shop": "base",
         "stats": {"hp": 250, "hp_regen": 8, "magic_resist": 30},
         "passives": [
-            {"op": "aura", "radius": 1200, "filter": "ally", "stats": {"magic_resist": 10}},
+            # Другая группа: магсопр «Наушников» с бронёй тимбилдингов не конкурирует,
+            # но свой key нужен, иначе модификатор снова назовётся "aura".
+            {"op": "aura", "key": "headphones_aura", "name": "Наушники с шумодавом",
+             "radius": 1200, "filter": "ally", "stats": {"magic_resist": 10}},
         ],
         "active": {
             "targeting": "none",
@@ -789,8 +836,12 @@ ITEMS: dict[str, dict] = {
             "move_speed": 45, "mana": 250,
         },
         "passives": [
-            {"op": "aura", "radius": 1200, "filter": "ally",
-             "stats": {"armor": 3, "hp_regen": 3, "mana_regen": 2}},
+            # Ранг выше, чем у «Тимбилдинга»: у носителя обоих (и у команды,
+            # где есть и то и другое) остаётся только эта аура.
+            {"op": "aura", "key": "corporate_party_aura", "name": "Корпоратив",
+             "radius": 1200, "filter": "ally",
+             "stats": {"armor": 3, "hp_regen": 3, "mana_regen": 2},
+             "unique": "team_support_aura", "unique_rank": 2},
         ],
         "active": {
             "targeting": "none",
@@ -806,7 +857,8 @@ ITEMS: dict[str, dict] = {
             ],
         },
         "desc": "Всей команде 350 HP, 120 маны и снятие дебаффов. Плюс аура брони, "
-                "реген и кроссовки. После корпоратива команда как новая.",
+                "реген и кроссовки. Аура сильнее тимбилдинговой и заменяет её, "
+                "а не складывается. После корпоратива команда как новая.",
         "tier": 4,
     },
 
@@ -950,44 +1002,45 @@ SHOP_LAYOUT: dict = {
 # ==========================================================================
 # Чего по-прежнему не хватает движку
 # ==========================================================================
-# Прошлый список закрыт: grant_gold/grant_xp, target_types, cyclone, ghost,
-# restore_mana, true_sight, drop_on_death, reflect_pct + duration у
-# on_take_damage, blocked_by_damage — всё это уже используется выше.
+# Закрыто за прошлые круги: grant_gold/grant_xp (в том числе from_target_bounty),
+# target_types, cyclone, ghost, restore_mana, true_sight, drop_on_death,
+# reflect_pct + duration у on_take_damage, blocked_by_damage, break_on_damage,
+# unique/unique_rank, gain_charge_on_enemy_cast — всё это уже используется выше.
+# Семантика отрицательного damage_taken_pct подтверждена по коду:
+# entities.damage_taken_mult = max(0, 1 + pct/100), то есть -20 даёт ×0.8.
 # Осталось следующее. Каждый пункт сейчас обойдён, и обход виден игроку.
 
 ENGINE_REQUESTS: list[str] = [
-    "накопление зарядов от событий. Поле charges статично и тратится расходниками, "
-    "а «Ящик стола» (Magic Wand) обязан копить заряды от вражеских кастов рядом. "
-    "Сейчас это активка с фиксированными 200 HP / 200 маны и кулдауном 13 с — "
-    "предмет работает, но перестал быть наградой за хорошую линию.",
+    "трата накопленных зарядов. Накопление заработало: gain_charge_on_enemy_cast "
+    "и max_charges у «Ящика стола» (Magic Wand) реально наращивают счётчик "
+    "(world._charge_nearby_wands), и он виден в интерфейсе. А списывать заряды "
+    "умеет только ветка расходника в world.use_item (`if it.is_consumable`), "
+    "которая вдобавок удаляет предмет на нуле — Magic Wand так вести себя не должен. "
+    "Нужно одно из двух: поле у active вида spend_charges: N, либо масштабирование "
+    "величин от числа зарядов (heal/restore_mana с per_charge). До этого активка "
+    "остаётся фиксированной на 200 HP / 200 маны, а заряды — украшением.",
 
-    "break_on_damage у stat_buff. Это НЕ blocked_by_damage: тот запрещает "
-    "применить активку после урона, а нужно прерывать уже работающий бафф. "
-    "«Кружка кофе» и «Банка энергетика» (Salve, Clarity) обязаны гаснуть от урона "
-    "героя — сейчас это только текст в desc, и оба расходника сильнее оригинала.",
-
-    "grant_xp должен уметь множитель, а не только флат. Midas в доте даёт 2.5× опыта "
-    "убитого юнита, поэтому он ценен на больших нейтралах. Флатовые 150 делают "
-    "«Корпоративную карту» одинаковой на стажёре и на боссе леса.",
-
-    "правила уникальности модификаторов и аур. Минус-броня «Публичного разноса» "
-    "(Desolator) не должна складываться сама с собой, а аура «Тимбилдинга» (+2 брони) "
-    "не должна стакаться с аурой «Корпоратива» (+3), который из неё же и собран. "
-    "Сейчас два саппорта с «Тимбилдингом» дают команде +4 брони.",
-
-    "подтвердить семантику отрицательного damage_taken_pct. §5 описывает ключ только "
-    "как «положительное = получает больше урона». «Ответить всем» ставит себе -20, "
-    "рассчитывая на снижение входящего урона на 20%. Если движок это не так читает — "
-    "предмет тихо не работает.",
-
-    "неподвижный юнит-наблюдатель для op summon. «Камера наблюдения» ставит "
-    "unit 'observer_camera': нужен юнит без атаки и движения, невидимый для врага, "
-    "со своим радиусом обзора. Это описание юнита, а не предмета — вопрос к data/units.",
+    "возвращённый урон не должен возвращаться обратно, и reflect_pct без вложенного "
+    "damage вообще ничего не делает. Из-за второго «Ответить всем» (Blade Mail) "
+    "сейчас не возвращает ни единицы урона: world.run_damage_reactions отбрасывает "
+    "реакцию с пустым effects (`if not inner: continue`), а pct подставляется только "
+    "в уже существующую операцию damage. Данными это чинится одной строкой внутри "
+    "on_take_damage — {'op': 'damage', 'dtype': 'pure', 'amount': 0, 'target': 'hit'}, "
+    "— но включать её нельзя, пока возврат не защищён от самого себя: у двух героев "
+    "с активным «Ответить всем» отскок идёт по кругу, каждый раз ×0.8 (их же "
+    "damage_taken_pct -20), нуля не достигает и обрывается только RecursionError. "
+    "Нужен признак «этот урон не отражается» на стороне движка.",
 
     # Подтверждено координатором как «не будет» — оставлено, чтобы не забыть,
     # что эти предметы намеренно отличаются от прототипов.
     "stat_swap / toggle предметов: Power Treads («Беговые кроссовки») зафиксированы "
     "на str 8 и не переключают атрибут.",
+
+    "юнита-наблюдателя не будет: призываемые варды в движок не заложены. "
+    "«Камера наблюдения» поэтому не вард, а личный обзор на 2 минуты, и так "
+    "и написана в desc, чтобы от неё не ждали дотовского Observer Ward. "
+    "Побочно: summon с незнакомым unit молча спавнит крипа ближнего боя "
+    "(content.creep_def падает на _FALLBACK_CREEPS) — именно это предмет и делал.",
 
     "убывающая длительность при повторном использовании: «Отгул» (BKB) держит "
     "фиксированные 7 с вместо дотовских 10→5.",
@@ -1053,6 +1106,7 @@ _REQUIRED_FIELDS = (
 _KNOWN_ITEM_FIELDS = frozenset(_REQUIRED_FIELDS) | {
     "charges", "drop_on_death", "target_types",
     "blocked_by_damage", "damage_block_sec",
+    "gain_charge_on_enemy_cast", "max_charges",
 }
 _KNOWN_ACTIVE_FIELDS = frozenset({
     "targeting", "cast_range", "cooldown", "mana_cost", "effects",
@@ -1106,6 +1160,18 @@ def _check_effects(effects, where, problems):
     if not isinstance(effects, list):
         problems.append(f"{where}: ожидался список эффектов, получено {type(effects).__name__}")
         return
+
+    # Дубль в одном списке: эфирная форма входит в маску «не может атаковать»
+    # (consts.CANNOT_ATTACK содержит F_ETHEREAL), так что disarm рядом с ghost —
+    # лишняя строка. Она переживёт любую правку ghost и начнёт врать в тултипе.
+    ops_here = [e.get("op") for e in effects if isinstance(e, dict)]
+    if "ghost" in ops_here and "disarm" in ops_here:
+        problems.append(
+            f"{where}: ghost и disarm в одном списке эффектов — дубль. "
+            f"Эфирная форма сама запрещает атаковать, отдельный disarm "
+            f"ничего не добавляет."
+        )
+
     for i, eff in enumerate(effects):
         sub = f"{where}[{i}]"
         if not isinstance(eff, dict):
@@ -1134,6 +1200,44 @@ def _check_effects(effects, where, problems):
             )
         if "target_types" in eff:
             _check_target_types(eff["target_types"], sub, problems)
+
+        # Уникальность: из группы обязан оставаться сильнейший, а «сильнейший»
+        # определяется только рангом. Без unique_rank движок берёт 1 для всех
+        # участников группы, и выживает не сильный эффект, а наложенный первым.
+        if "unique" in eff or "unique_rank" in eff:
+            group = eff.get("unique")
+            if not isinstance(group, str) or not group:
+                problems.append(
+                    f"{sub}: unique_rank={eff.get('unique_rank')!r} без непустого "
+                    f"имени группы unique ничего не делает"
+                )
+            elif "unique_rank" not in eff:
+                problems.append(
+                    f"{sub}: группа unique={group!r} задана без unique_rank. "
+                    f"Движок возьмёт ранг 1 всем участникам группы, и останется "
+                    f"не сильнейший эффект, а тот, что лёг первым"
+                )
+            elif not isinstance(eff["unique_rank"], (int, float)) or \
+                    isinstance(eff["unique_rank"], bool):
+                problems.append(
+                    f"{sub}: unique_rank={eff['unique_rank']!r} должен быть числом"
+                )
+
+        # Ауре нужен свой key: без него abilities.auras() зовёт модификатор
+        # просто "aura", и две разные ауры затирают друг друга на одной цели.
+        if op == "aura" and not eff.get("key"):
+            problems.append(
+                f"{sub}: у ауры нет key — движок назовёт модификатор 'aura', "
+                f"и любая другая аура затрёт эту на той же цели"
+            )
+
+        # ghost уже усиливает магию ровно на 40% (combat.ETHEREAL_MAGIC_AMP).
+        if op == "ghost" and eff.get("magic_amp"):
+            problems.append(
+                f"{sub}: ghost с magic_amp={eff['magic_amp']!r} — двойной счёт. "
+                f"Эфирная форма усиливает магию сама, а magic_amp вешает сверх "
+                f"этого damage_taken_pct на все типы урона, включая чистый"
+            )
 
         # Защита от бага «execute убивает героя одним нажатием».
         if op == "execute":
@@ -1165,6 +1269,12 @@ def _check_effects(effects, where, problems):
                 problems.append(
                     f"{sub}: on_take_damage без reflect_pct и без effects ничего не делает"
                 )
+            # На самом деле пустого effects мало и при reflect_pct: движок только
+            # подставляет процент в уже описанную операцию damage, а реакцию
+            # с пустым списком отбрасывает целиком (run_damage_reactions).
+            # Жёсткой проверкой это пока не сделано осознанно: «Ответить всем»
+            # намеренно оставлен выключенным до защиты возврата от самого себя,
+            # см. ENGINE_REQUESTS.
 
         for nested_key in _NESTED_EFFECT_KEYS:
             if nested_key in eff:
@@ -1198,19 +1308,7 @@ def _check_schema(key, item, problems):
     if not item.get("prototype"):
         problems.append(f"{key}: не указан prototype — предмет Dota 2, который он воспроизводит")
 
-    # charges: обязателен расходникам и бессмыслен у остальных.
-    charges = item.get("charges")
-    if shop == "consumable":
-        if not isinstance(charges, int) or isinstance(charges, bool) or charges < 1:
-            problems.append(
-                f"{key}: расходнику нужен charges >= 1 (сколько применений в покупке), "
-                f"получено {charges!r}"
-            )
-    elif charges is not None:
-        problems.append(
-            f"{key}: charges={charges!r} у не-расходника. Накопительные заряды "
-            f"движок пока не поддерживает — см. ENGINE_REQUESTS"
-        )
+    _check_charges(key, item, problems)
 
     if "drop_on_death" in item and not isinstance(item["drop_on_death"], bool):
         problems.append(f"{key}: drop_on_death={item['drop_on_death']!r}, ожидался bool")
@@ -1243,6 +1341,58 @@ def _check_schema(key, item, problems):
             _check_effects(active.get("effects", []), f"{key}.active.effects", problems)
             if not active.get("effects"):
                 problems.append(f"{key}.active: активка без эффектов — тогда должно быть None")
+
+
+def _check_charges(key, item, problems):
+    """Заряды: разовые у расходника и накопительные у копилок.
+
+    Оба накопительных поля движок читает со значениями по умолчанию
+    (world._charge_nearby_wands берёт max_charges=20, если поля нет), поэтому
+    потолок обязан стоять в данных, а не подразумеваться.
+    """
+    shop = item.get("shop")
+    charges = item.get("charges")
+    gains = item.get("gain_charge_on_enemy_cast")
+    cap = item.get("max_charges")
+
+    if gains is not None and not isinstance(gains, bool):
+        problems.append(f"{key}: gain_charge_on_enemy_cast={gains!r}, ожидался bool")
+    if gains and not (isinstance(cap, int) and not isinstance(cap, bool) and cap >= 1):
+        problems.append(
+            f"{key}: gain_charge_on_enemy_cast=True требует max_charges >= 1, "
+            f"получено {cap!r}. Без него потолок зарядов задаёт движок (20), "
+            f"а не данные, и правка баланса пройдёт мимо предмета."
+        )
+    if cap is not None and not gains:
+        problems.append(
+            f"{key}: max_charges={cap!r} без gain_charge_on_enemy_cast=True — "
+            f"копить заряды нечем, поле ничего не ограничивает"
+        )
+
+    if shop == "consumable":
+        if not isinstance(charges, int) or isinstance(charges, bool) or charges < 1:
+            problems.append(
+                f"{key}: расходнику нужен charges >= 1 (сколько применений в покупке), "
+                f"получено {charges!r}"
+            )
+        return
+
+    if charges is None:
+        return
+    if not gains:
+        problems.append(
+            f"{key}: charges={charges!r} у не-расходника, который ничего не копит. "
+            f"Списывать заряды движок умеет только веткой расходника в use_item, "
+            f"и она же удаляет предмет на нуле — см. ENGINE_REQUESTS"
+        )
+    elif not isinstance(charges, int) or isinstance(charges, bool) or charges < 0:
+        problems.append(
+            f"{key}: стартовый charges={charges!r}, ожидалось неотрицательное целое"
+        )
+    elif isinstance(cap, int) and charges > cap:
+        problems.append(
+            f"{key}: стартовый charges={charges} больше max_charges={cap}"
+        )
 
 
 def _check_damage_block(holder, where, problems):

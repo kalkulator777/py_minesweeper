@@ -857,13 +857,14 @@ class World:
 
         for proc in getattr(u, "attack_procs", ()):
             if proc["cooldown"] > 0:
-                gate = (u.id, proc["key"])
+                gate = (u.id, proc["key"]) if not proc["once_per_target"] \
+                    else (u.id, proc["key"], target.id)
                 if self._proc_ready.get(gate, 0.0) > self.time:
                     continue
             if proc["chance"] < 1.0 and self.rng.random() >= proc["chance"]:
                 continue
             if proc["cooldown"] > 0:
-                self._proc_ready[(u.id, proc["key"])] = self.time + proc["cooldown"]
+                self._proc_ready[gate] = self.time + proc["cooldown"]
             ab.execute(self, ab.EffectContext(u, target, target.x, target.y,
                                               proc["level"], "attack_proc"),
                        proc["effects"])
@@ -1093,7 +1094,9 @@ class World:
             src = self.units.get(m.source_id)
             if src is None:
                 continue
-            ctx = ab.EffectContext(src, victim, victim.x, victim.y, 1, m.ability_key)
+            level = int(m.data.get("on_death_level", 1))
+            ctx = ab.EffectContext(src, victim, victim.x, victim.y, level,
+                                   m.ability_key)
             ab.execute(self, ctx, effects)
 
     def _credit_assist(self, victim: Hero, attacker) -> None:

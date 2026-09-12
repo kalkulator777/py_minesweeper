@@ -206,7 +206,7 @@ function drawFog() {
     if (u.team !== team || u.alive === false) continue;
     const p = interpolated(u);
     const [sx, sy] = w2s(p.x, p.y);
-    const vision = (u.e === 'hero' ? 1800 : u.is_building ? 1500 : 900) * cam.zoom;
+    const vision = (u.vis || 900) * cam.zoom;
     if (sx < -vision || sy < -vision || sx > W + vision || sy > H + vision) continue;
     const g = fctx.createRadialGradient(sx, sy, vision * 0.45, sx, sy, vision);
     g.addColorStop(0, 'rgba(0,0,0,1)');
@@ -374,11 +374,13 @@ function drawFloaters() {
   for (const f of G.floaters) {
     const age = (now - f.born) / 1300;
     const [sx, sy] = w2s(f.x, f.y);
-    const y = sy - 26 - age * 42;
+    const y = sy - 26 - age * 42 - (f.jy || 0);
     ctx.globalAlpha = Math.max(0, 1 - age);
     ctx.font = `${Math.round(13 * f.scale)}px ${getComputedStyle(document.body).fontFamily}`;
-    ctx.fillStyle = '#000';
-    ctx.fillText(f.text, sx + f.jx + 1, y + 1);
+    // Обводка, а не тень: на светлой земле тень сливается
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(0,0,0,.85)';
+    ctx.strokeText(f.text, sx + f.jx, y);
     ctx.fillStyle = f.color;
     ctx.fillText(f.text, sx + f.jx, y);
   }

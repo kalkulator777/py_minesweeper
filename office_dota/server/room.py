@@ -211,7 +211,11 @@ class Room:
         for p in picked:
             if p.team < 0:
                 p.team = self._auto_team()
-            h = self.world.spawn_hero(p.team, p.hero_key, name=p.name)
+            # Ботом герой становится, если за него никто не сидит: это и
+            # добавленные в лобби боты, и те, кого отметили «играем без него».
+            is_bot = p.replaced_by_bot or not p.connected
+            h = self.world.spawn_hero(p.team, p.hero_key, name=p.name,
+                                      is_bot=is_bot)
             p.hero_id = h.id
             p.view = ClientView(p.team)
         self.phase = PHASE_PREGAME

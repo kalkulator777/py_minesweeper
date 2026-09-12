@@ -205,12 +205,19 @@ function ingestEvents(evs) {
   G.killfeed = G.killfeed.filter(k => k.born > cutoff);
 }
 
+let floaterSlot = 0;
 function pushFloater(id, text, color, scale = 1) {
   const u = G.units.get(id);
   if (!u) return;
+  // Числа от одного юнита разводим по дуге и по высоте, иначе два
+  // соседних урона сливаются в одно нечитаемое число вроде «-1617».
+  floaterSlot = (floaterSlot + 1) % 6;
+  const ang = (floaterSlot / 6) * Math.PI - Math.PI / 2;
   G.floaters.push({
     x: u.x, y: u.y, text, color, scale,
-    born: performance.now(), jx: (Math.random() - .5) * 26,
+    born: performance.now(),
+    jx: Math.sin(ang) * 34,
+    jy: floaterSlot * 5,
   });
   if (G.floaters.length > 120) G.floaters.shift();
 }

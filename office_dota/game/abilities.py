@@ -309,8 +309,11 @@ def _op_stat_buff(world, ctx, eff):
     if eff.get("break_on_damage"):
         data["break_on_damage"] = True
     if eff.get("on_death_effects"):
-        # Метка платит, когда помеченный умирает от чьей угодно руки
+        # Метка платит, когда помеченный умирает от чьей угодно руки.
+        # Уровень запоминаем здесь: в момент смерти способности уже не видно,
+        # и величины по уровням схлопнулись бы в первый элемент.
         data["on_death_effects"] = eff["on_death_effects"]
+        data["on_death_level"] = ctx.level
     for t in _resolve_targets(world, ctx, eff):
         d = t.scaled_duration(duration) if is_debuff else duration
         m = mods.Modifier(key, d, name=eff.get("name", "Эффект"), stats=stats,
@@ -493,18 +496,32 @@ def _op_chain(world, ctx, eff):
     hop(first, jumps, 1.0, set())
 
 
+_NESTED_KEYS = ("effects", "on_hit", "on_tick", "on_kill", "on_fail",
+                "on_finish", "on_land", "on_death_effects")
+
+
 def _scaled(effects: list, scale: float) -> list:
-    """Копия списка эффектов с умноженными числовыми величинами."""
+    """Копия списка эффектов с умноженными величинами, включая вложенные.
+
+    Рекурсия обязательна: без неё у цепочки затухал бы только верхний
+    уровень, а урон внутри area оставался бы полным.
+    """
     if scale >= 0.999:
         return effects
     out = []
     for e in effects:
         e2 = dict(e)
         for key in ("amount", "dps", "heal"):
-            if key in e2 and isinstance(e2[key], (int, float)):
-                e2[key] = e2[key] * scale
-            elif key in e2 and isinstance(e2[key], (list, tuple)):
-                e2[key] = [v * scale for v in e2[key]]
+            v = e2.get(key)
+            if isinstance(v, bool):
+                continue
+            if isinstance(v, (int, float)):
+                e2[key] = v * scale
+            elif isinstance(v, (list, tuple)):
+                e2[key] = [x * scale for x in v]
+        for key in _NESTED_KEYS:
+            if isinstance(e2.get(key), list):
+                e2[key] = _scaled(e2[key], scale)
         out.append(e2)
     return out
 

@@ -1,7 +1,7 @@
 // Точка входа клиента: связывает сеть, ввод, отрисовку и интерфейс.
 
 import { G } from './net.js';
-import { initRender, draw, drawMinimap, resize } from './render.js';
+import { initRender, draw, drawMinimap, resize, cam } from './render.js';
 import { initInput, tickCamera, castPreview, ui } from './input.js';
 import {
   showScreen, initMenu, initLobby, renderLobby, initHud, renderHud,
@@ -11,6 +11,7 @@ import {
 
 // Доступ к состоянию из консоли и автотестов
 window.__G = G;
+window.__cam = cam;
 
 const cv = document.getElementById('cv');
 const mm = document.getElementById('minimap');

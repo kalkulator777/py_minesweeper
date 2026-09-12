@@ -65,6 +65,9 @@ def unit_static(u) -> dict:
         "team": u.team,
         "n": u.name,
         "r": round(u.radius),
+        # Настоящий радиус обзора: клиент рисует туман ровно по нему,
+        # иначе картинка расходится с тем, что сервер считает видимым
+        "vis": round(u.vision),
     }
     if u.etype in (E_HERO, E_ILLUSION):
         d["hero"] = u.hero_key
