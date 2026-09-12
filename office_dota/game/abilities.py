@@ -21,7 +21,7 @@ VALID_OPS = frozenset({
     # добавлены по итогам проектирования контента — см. ENGINE_REQUESTS
     # в data/heroes.py и data/items.py
     "chain", "restore_mana", "mana_burn", "grant_gold", "grant_xp",
-    "true_sight", "ghost", "cyclone", "toggle_pulse",
+    "true_sight", "ghost", "cyclone",
     "stun", "slow", "silence", "root", "disarm", "hex", "taunt", "purge",
     "shield", "invulnerable", "magic_immune", "invisible", "cheat_death", "stat_buff",
     "blink", "pull", "push", "leap",
@@ -618,11 +618,6 @@ def _op_on_take_damage(world, ctx, eff):
     ctx.caster.add_modifier(m)
 
 
-def _op_toggle_pulse(world, ctx, eff):
-    """Обёртка: содержимое применяется, пока способность включена.
-    Сам цикл ведёт мир, здесь — разовое применение одного такта."""
-    execute(world, ctx, eff.get("effects", []))
-
 
 _HANDLERS = {
     "damage": _op_damage,
@@ -663,7 +658,6 @@ _HANDLERS = {
     "true_sight": _op_true_sight,
     "ghost": _op_ghost,
     "cyclone": _op_cyclone,
-    "toggle_pulse": _op_toggle_pulse,
     "on_take_damage": _op_on_take_damage,
 }
 

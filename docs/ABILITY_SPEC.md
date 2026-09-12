@@ -153,9 +153,88 @@ damage, attack_speed, attack_range, bat_pct
 armor, magic_resist, status_resist, evasion
 move_speed, move_speed_pct
 spell_amp, cooldown_reduction
-damage_taken_pct        # положительное = получает больше урона (усиление входящего)
+damage_taken_pct        # положительное = получает БОЛЬШЕ урона, отрицательное = МЕНЬШЕ
+                        # (движок считает множитель как 1 + pct/100, то есть -20 даёт 0.8)
 vision_day, vision_night
 ```
+
+## 5а. Примитивы, добавленные по итогам проектирования контента
+
+Появились после того, как авторы героев и предметов уперлись в нехватку
+выразительности. Каждый закрывает конкретный архетип.
+
+### Операции
+
+```python
+{"op": "chain", "jumps": [4,5,6,7], "radius": 500, "decay": 0.85,
+ "delay": 0.2, "filter": "enemy", "effects": [...]}
+    # Прыжки по целям. decay — множитель величин на каждый следующий прыжок
+    # (масштабируются amount / dps / heal). К уже задетым не возвращается.
+
+{"op": "restore_mana", "amount": 135, "pct": 0, "target": "hit"}
+{"op": "mana_burn", "amount": 0, "per_int": 0.7, "damage_per_mana": 0.8}
+{"op": "grant_gold", "amount": 190, "target": "caster"}
+{"op": "grant_xp", "amount": 0, "from_target_bounty": 2.5, "target": "caster"}
+    # from_target_bounty добавляет опыт, кратный награде за жертву
+
+{"op": "true_sight", "duration": 12, "radius": 900, "target": "caster"}
+{"op": "ghost", "duration": 4, "magic_amp": 40, "target": "caster"}
+    # Эфирная форма: физический урон не проходит ВООБЩЕ и атаковать нельзя —
+    # отдельный disarm рядом не нужен.
+{"op": "cyclone", "duration": 2.5, "on_land": [...], "target": "hit"}
+    # Неуязвим + обездвижен + нем + разоружён одной операцией
+{"op": "on_take_damage", "duration": 4.5, "reflect_pct": 100, "effects": [...]}
+    # В active обязана быть duration. reflect_pct возвращает долю входящего урона.
+```
+
+### Новые фильтры целей
+
+| Значение | Смысл |
+|---|---|
+| `enemy` | Вражеские **юниты**. Строения НЕ задеваются — как в доте |
+| `enemy_all` | Вражеские юниты и строения |
+| `buildings` | Только вражеские строения, неуязвимые по цепочке исключаются |
+
+### Новые поля
+
+```python
+# У любой операции контроля (stun / silence / root / disarm / hex):
+"bound_to_channel": true      # снимается вместе с прерванным каналом
+
+# У proc_attack:
+"cooldown": [10, 8, 6, 4]     # кулдаун СРАБАТЫВАНИЯ, не способности
+"once_per_target": true
+```
+> Пассивка с `chance: 100` без `cooldown` срабатывает **каждым ударом**.
+> Именно так ломалась кража бюджета у Безопасника: 270 за 12 секунд боя.
+
+```python
+# У stat_buff и aura:
+"unique": "armor_aura", "unique_rank": 2   # из группы остаётся сильнейший
+# У stat_buff:
+"break_on_damage": true                    # сбивается уроном героя
+"on_death_effects": [...]                  # срабатывают, когда носитель умирает
+                                           # ОТ ЧЬЕЙ УГОДНО руки
+
+# У способности и предмета:
+"target_types": ["creep", "neutral"]       # кого вообще можно взять в цель
+"toggle_interval": 1.0                     # период применения включённой способности
+"cast_range": [400, 600, 800, 1000]        # дальность тоже может расти по уровням
+
+# У предмета:
+"drop_on_death": true
+"blocked_by_damage": true, "damage_block_sec": 3.0
+"gain_charge_on_enemy_cast": true, "max_charges": 20
+```
+
+### Поведение toggle
+
+Включённая способность применяет свои `effects` каждые `toggle_interval`
+секунд и списывает `mana_cost` **за каждый тик**. При нехватке маны
+выключается сама. Toggle с нулевой ценой маны выключить нечем — это дыра,
+и валидатор данных её ловит.
+
+---
 
 ## 6. Боевая модель (как в Dota 2 — не переучиваться)
 
