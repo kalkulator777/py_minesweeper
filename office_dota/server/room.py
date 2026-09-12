@@ -22,6 +22,12 @@ from ..game.world import World
 PREGAME_TIME = 20.0          # с от старта матча до первой волны
 
 
+def log(msg: str) -> None:
+    """Сообщение в консоль того, кто держит сервер. Ему полезно видеть,
+    что происходит, когда коллеги жалуются «у меня всё зависло»."""
+    print(f"[игра] {msg}", flush=True)
+
+
 class Player:
     """Человек за компом. Переживает разрыв связи — по этому и узнаётся."""
 
@@ -137,7 +143,7 @@ class Room:
             return
         # В матче — не выкидываем, даём время вернуться
         self._disconnect_deadlines[pid] = time.monotonic() + DISCONNECT_GRACE
-        print(f"[room] {p.name} отключился, дедлайн через {DISCONNECT_GRACE}с, фаза={self.phase}", flush=True)
+        log(f"{p.name} отключился, ждём {int(DISCONNECT_GRACE)} с")
         self.broadcast_system(f"{p.name} отключился, ждём {int(DISCONNECT_GRACE)} с")
 
     def connected_players(self) -> list[Player]:
@@ -203,7 +209,6 @@ class Room:
             p = self.players.get(pid)
             if p is None or p.connected:
                 continue
-            print(f"[room] дедлайн {p.name} истёк, фаза={self.phase}", flush=True)
             if self.phase in (PHASE_RUNNING, PHASE_PREGAME):
                 self.set_pause(PAUSE_REASON_DISCONNECT, waiting=[pid])
 
@@ -231,6 +236,7 @@ class Room:
         self.phase = PHASE_PREGAME
         self.pregame_timer = PREGAME_TIME
         self.world.next_wave_time = PREGAME_TIME + C.WAVES["first_wave_time"]
+        log(f"матч начат, игроков: {len(picked)}")
         self.broadcast_system("Матч начинается")
         self.broadcast_state()
         return True, ""
@@ -263,6 +269,8 @@ class Room:
             if self.world.phase == PHASE_FINISHED:
                 self.phase = PHASE_FINISHED
                 w = self.world.winner
+                log(f"матч окончен за {self.world.time/60:.1f} мин, "
+                    f"победа: {TEAM_NAMES.get(w, '?')}")
                 self.broadcast_system(f"Победа: {TEAM_NAMES.get(w, '?')}")
                 self.broadcast_state()
 
@@ -279,7 +287,7 @@ class Room:
             from .persistence import save_room
             save_room(self, "autosave")
         except Exception as exc:                              # noqa: BLE001
-            print(f"[room] автосохранение не удалось: {exc}", flush=True)
+            log(f"автосохранение не удалось: {exc}")
 
     # ======================================================================
     #  Рассылка

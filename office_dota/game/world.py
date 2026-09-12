@@ -358,7 +358,11 @@ class World:
         """
         rules = C.BUILDING_RULES
         delay = float(rules.get("out_of_combat_regen_delay_sec", 15.0))
-        regen = float(rules.get("backdoor_regen_hp_per_sec", 25.0))
+        # Быстрый реген — только под защитой от бэкдора. Обычное строение
+        # вне боя восстанавливается своим слабым регеном. Раньше быстрый
+        # реген применялся ко всем: 25 HP/с — это 1500 в минуту, больше,
+        # чем всё здоровье башни первого тира, и осада не ломалась никогда.
+        backdoor_regen = float(rules.get("backdoor_regen_hp_per_sec", 25.0))
         self._backdoor_accum += dt
         recheck = self._backdoor_accum >= 0.5
         if recheck:
@@ -375,12 +379,21 @@ class World:
             if recheck:
                 b.backdoor_protected = self._is_backdoor(b)
             if b.hp < b.max_hp and self.time - b.last_attacked_time > delay:
-                b.hp = min(b.max_hp, b.hp + regen * dt)
+                rate = backdoor_regen if b.backdoor_protected else b.hp_regen
+                if rate > 0:
+                    b.hp = min(b.max_hp, b.hp + rate * dt)
 
     def _is_backdoor(self, b: Building) -> bool:
-        """Строение считается защищённым, если рядом нет своих линейных крипов."""
+        """Защита снята, если рядом крипы ТОГО, КТО ЛОМАЕТ.
+
+        Именно так это устроено в доте: пришёл с волной — ломай, пришёл один
+        сквозь лес — строение почти не получает урона. Раньше здесь
+        проверялись крипы защитника, из-за чего строения были защищены
+        почти всегда и осада не заканчивалась никогда.
+        """
+        attacker_team = enemy_of(b.team)
         for u in self.spatial.query(b.x, b.y, 1200.0):
-            if u.alive and u.team == b.team and u.etype == E_CREEP:
+            if u.alive and u.team == attacker_team and u.etype in (E_CREEP, E_SUMMON):
                 if b.dist_sq_to(u) <= 1200.0 ** 2:
                     return False
         return True

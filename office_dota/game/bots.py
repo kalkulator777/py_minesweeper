@@ -16,8 +16,9 @@ from .consts import (
 )
 
 THINK_INTERVAL = 0.35        # с, как часто бот принимает решения
-GROUP_AFTER_SEC = 480.0      # с, когда боты перестают сидеть по линиям
-GROUP_RETHINK = 25.0         # с, как часто пересматривается общая цель
+GROUP_AFTER_SEC = 420.0      # с, когда боты перестают сидеть по линиям
+GROUP_RETHINK = 60.0         # с, минимальная приверженность выбранной линии
+GROUP_SWITCH_MARGIN = 1.35   # во сколько раз новая линия должна быть лучше
 RETREAT_HP = 0.32
 RESUME_HP = 0.72
 ENGAGE_RADIUS = 900.0
@@ -162,31 +163,64 @@ class BotDirector:
         return best or fallback
 
     def team_focus(self, team: int) -> str:
-        """Линия, на которую команда давит вместе. Выбирается по самому
-        слабому оставшемуся строению противника."""
+        """Линия, на которую команда давит вместе.
+
+        Выбор с приверженностью и гистерезисом. Без них фокус перескакивал
+        каждые двадцать пять секунд: боты шли через всю карту, приходили,
+        цель менялась, и они шли обратно, не взяв ни одного объекта.
+        """
         w = self.world
         if w.time < GROUP_AFTER_SEC:
             return ""
-        if self._focus_until.get(team, 0.0) > w.time:
-            return self._focus.get(team, "")
 
-        enemy = enemy_of(team)
-        best_lane, best_score = "", 1e18
+        current = self._focus.get(team, "")
+        committed = self._focus_until.get(team, 0.0) > w.time
+        if committed and current and self._lane_score(team, current) is not None:
+            return current
+
+        best_lane, best_score = "", -1e18
         for lane in gm.LANES:
-            targets = [u for u in w.units.values()
-                       if u.alive and u.team == enemy and u.is_building
-                       and u.lane == lane and u.etype != "fountain"
-                       and not w.is_invulnerable_building(u)]
-            if not targets:
+            score = self._lane_score(team, lane)
+            if score is None:
                 continue
-            # Чем меньше здоровья у ближайшего рубежа, тем привлекательнее линия
-            score = min(t.hp for t in targets)
-            if score < best_score:
+            if score > best_score:
                 best_score, best_lane = score, lane
+        if not best_lane:
+            return current
+
+        # Переключаемся, только если новая линия ощутимо лучше текущей
+        if current and current != best_lane:
+            cur_score = self._lane_score(team, current)
+            if cur_score is not None and best_score < cur_score * GROUP_SWITCH_MARGIN:
+                best_lane = current
 
         self._focus[team] = best_lane
         self._focus_until[team] = w.time + GROUP_RETHINK
         return best_lane
+
+    def _lane_score(self, team: int, lane: str):
+        """Насколько линия привлекательна для общего пуша. None — брать нечего.
+
+        Учитываем и слабость ближайшего рубежа, и продвижение своих крипов:
+        давить надо туда, где уже есть напор, а не туда, где просто мало HP.
+        """
+        w = self.world
+        enemy = enemy_of(team)
+        targets = [u for u in w.units.values()
+                   if u.alive and u.team == enemy and u.is_building
+                   and u.lane == lane and u.etype != "fountain"
+                   and not w.is_invulnerable_building(u)]
+        if not targets:
+            return None
+        weakest = min(targets, key=lambda t: t.hp / max(1.0, t.max_hp))
+        weakness = 1.0 - weakest.hp / max(1.0, weakest.max_hp)
+
+        # Продвижение: сколько наших крипов стоит рядом с этим рубежом
+        pressure = 0
+        for u in w.spatial.query(weakest.x, weakest.y, 1400.0):
+            if u.alive and u.team == team and u.etype == E_CREEP:
+                pressure += 1
+        return weakness * 2.0 + min(pressure, 8) * 0.25 + 0.3
 
     def _push_lane(self, h, brain: BotBrain) -> None:
         """Идти на ближайшее уязвимое вражеское строение своей линии.
